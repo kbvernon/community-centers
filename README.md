@@ -14,7 +14,9 @@ This repository contains code and figures for our paper:
 > (2023). A method for defining dispersed community territories.
 > *Journal of Archaeological Science*.
 
-You can view the supplement with the primary R code and analyses here: [/R/community-clustering.html](https://kbvernon.github.io/community_centers/R/community-clustering.html).
+**Preprint**: [manuscript.pdf](/manuscript/manuscript.pdf)  
+
+**Supplement**: [/R/community-clustering.html](/R/community-clustering.html)  
 
 ## Contents  
 
