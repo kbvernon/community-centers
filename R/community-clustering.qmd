@@ -1,0 +1,1457 @@
+---
+title: "Supplement A: Community Clustering"
+date: today
+published-title: "COMPILED"
+format:
+  html: 
+    embed-resources: true
+    fig-align: center
+    fig-dpi: 300
+    fig-responsive: true
+    number-sections: true
+    number-depth: 3
+    toc: true
+    toc-depth: 3
+    smooth-scroll: true
+    theme: cosmo
+    highlight-style: a11y
+execute: 
+  echo: true
+  warning: false
+  error: false
+---
+
+## Introudction
+
+**Goal:** identify geographic communities  
+
+**Data:** VEPII and Cibola databases  
+
+**Method:** using a somewhat novel clustering algorithm outlined below  
+
+This document is setup so that it focuses on the actual steps of the analysis, using verbose names for functions that should make their purpose clear. You can also dig into what each function does by unfolding the relevant code chunk. The critical R package for doing path analysis is [`cppRouting`](https://github.com/vlarmet/cppRouting). It's optimized for road networks, but still very fast. Someone should write a path-finding package (maybe using Rust?) optimized for grid networks... 
+
+## R Preamble
+
+```{r}
+
+library(arrow)
+library(cppRouting)
+library(ggfx)
+library(ggnewscale)
+library(ggspatial)
+library(gt)
+library(here)
+library(igraph)
+library(magick)
+library(patchwork)
+library(sf)
+library(terra)
+library(tidyterra)
+library(tidyverse)
+
+```
+
+Some ggplot defaults
+
+```{r}
+#| code-fold: true
+
+region_colors <- c(
+  "cib" = "#D57300", 
+  "cmv" = "#009E8C", 
+  "nrg" = "#9B70FF"
+)
+
+region_labels <- as_labeller(c(
+  "cmv" = "Central Mesa Verde",
+  "nrg" = "Northern Rio Grande",
+  "cib" = "Cibola"
+))
+
+theme_set(theme_bw())
+
+theme_update(
+  axis.text = element_text(size = rel(0.75), color = "gray50"),
+  axis.ticks = element_line(linewidth = 0.2, color = "gray85"),
+  axis.title = element_text(size = rel(1)),
+  legend.text = element_text(size = rel(0.9)),
+  legend.title = element_text(size = rel(0.9)),
+  panel.grid = element_blank(),
+  plot.title = element_text(size = rel(1), margin = margin(b = 2)),
+  strip.background = element_blank(),
+  strip.text = element_text(size = rel(1))
+)
+
+# trim all white space around image, but then add a few white pixels back (dx, dy)
+prepare_image <- function(x, dx = 2, dy = 30, color = "white") {
+  
+  img <- magick::image_read(path = x)
+  
+  img <- magick::image_trim(img)
+  
+  info <- magick::image_info(img)
+    
+  new_width <- info$width + dx
+  new_height <- info$height + dy
+  
+  img <- magick::image_extent(
+    img, 
+    geometry_area(new_width, new_height), 
+    color = color
+  )
+  
+  magick::image_write(img, path = x)
+  
+}
+
+```
+
+## Data
+
+```{r}
+#| code-fold: true
+
+build_region <- function(gpkg, region){
+  
+  region_query <- paste0("SELECT * FROM regions WHERE region = '", region, "'")
+  r <- read_sf(gpkg, query = region_query)
+  
+  site_query <- paste0("SELECT * FROM sites WHERE region = '", region, "'")
+  s <- read_sf(gpkg, query = site_query) |> st_filter(r)
+  
+  if ("communities" %in% st_layers(gpkg)$name){
+    
+    community_query <- paste0("SELECT * FROM communities WHERE region = '", region, "'")
+    t <- read_sf(gpkg, query = community_query) |> st_filter(r)
+    
+  } else {
+    
+    t <- NULL
+    
+  }
+  
+  list(
+    name = region,
+    preferred_projection = ifelse(region == "nrg", 26913, 26912),
+    region = r,
+    sites = s,
+    communities = t
+  )
+  
+}
+
+add_elevation <- function(x){
+  
+  dem_fn <- paste0("dem-", x$name, ".tif")
+  x$dem <- here("data", dem_fn) |> rast()
+  
+  return(x)
+  
+}
+
+# getters
+get_farms <- function(x){
+  
+  x$sites |> 
+    st_drop_geometry() |> 
+    filter(center == 0)
+  
+}
+
+get_centers <- function(x){
+  
+  x$sites |> 
+    st_drop_geometry() |> 
+    filter(center == 1)
+  
+}
+
+```
+
+```{r}
+
+gpkg <- here("data", "community-centers.gpkg")
+
+cmv <- build_region(gpkg, "cmv") |> add_elevation()
+nrg <- build_region(gpkg, "nrg") |> add_elevation()
+cib <- build_region(gpkg, "cib") |> add_elevation()
+
+```
+
+```{r}
+#| code-fold: true
+
+e <- function(x){
+  
+  tibble(
+    region = x$name,
+    min =  terra::global(x$dem, min, na.rm = TRUE)$min,
+    max =  terra::global(x$dem, max, na.rm = TRUE)$max,
+    mean = terra::global(x$dem, mean, na.rm = TRUE)$mean,
+    sd =   terra::global(x$dem, sd, na.rm = TRUE)$sd
+  )
+  
+}
+
+bind_rows(
+  e(cmv),
+  e(nrg),
+  e(cib)
+) |> 
+  gt() |> 
+  tab_header("Elevation") |> 
+  fmt_number(-region, decimals = 1) |> 
+  opt_align_table_header("left")
+
+```
+
+```{r}
+#| code-fold: true
+
+plot_region <- function(x){
+  
+  hell <- function(x, n = 1000){
+    
+    slope <- terrain(x, "slope", unit = "radians")
+    aspect <- terrain(x, "aspect", unit = "radians")
+    
+    hill <- shade(slope, aspect, 30, 45)
+    hill <- setValues(hill, scales::rescale(values(hill), to = c(1, n)))
+    hill <- round(hill)
+    
+    list(
+      shade = hill,
+      grays = hcl.colors(n, "Grays")[values(hill)]
+    )
+    
+  }
+  
+  h <- hell(x$dem)
+  
+  ggplot() +
+    geom_spatraster(
+      data = h$shade, 
+      fill = h$grays,
+      maxcell = Inf
+    ) +
+    geom_spatraster(data = x$dem, alpha = 0.5) +
+    scale_fill_hypso_c(
+      name = "Elevation (m)",
+      palette = "utah_1",
+      limits = c(1350, 3850),
+      alpha = 0.5,
+      na.value = "transparent"
+    ) +
+    with_outer_glow(
+      geom_sf(
+        data = x$sites |> filter(center == 0),
+        shape = 16,
+        color = "gray25",
+        alpha = 0.5,
+        size = 0.6
+      ),
+      colour = "white",
+      sigma = 0.5,
+      expand = 1
+    ) +
+    with_outer_glow(
+      geom_sf(
+        data = x$sites |> filter(center == 1),
+        shape = 17,
+        color = "#CD3C00",
+        alpha = 0.8,
+        size = 1.1
+      ),
+      colour = "white",
+      sigma = 0.5,
+      expand = 1
+    ) +
+    annotation_scale(
+      aes(location = "bl", line_col = "white", text_col = "white"),
+      height = unit(0.18, "cm"),
+      line_width = 0.5
+    ) +
+    coord_sf(expand = FALSE) +
+    theme(
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      axis.title = element_blank(),
+      legend.position = "none",
+      plot.margin = margin(l = 2)
+    )
+  
+}
+
+gg <- (plot_region(cmv) + ggtitle("Central Mesa Verde")) +
+  (plot_region(nrg) + ggtitle("Northern Rio Grande")) + 
+  (plot_region(cib) + ggtitle("Cibola"))
+
+fn <- here("figures", "overview-maps.png")
+
+ggsave(
+  plot = gg,
+  filename = fn,
+  width = 7.5, 
+  height = 4.5,
+  dpi = 600,
+  bg = "white"
+)
+
+prepare_image(fn)
+
+remove(plot_region, gg, fn)
+
+```
+
+::: {#fig-overview}
+![](../figures/overview-maps.png){width="100%" fig-alt="An overview map showing the distribution of farms and community centers across the three study areas."}
+
+An overview map showing the distribution of farms and community centers across the three study areas.
+:::
+
+## Graph
+
+It's important to note that throughout we track movement between grid cells, not site points. 
+
+### Convert grid to graph
+
+```{r}
+#| code-fold: true
+
+add_graph <- function(x, max_slope = NULL, ...){
+  
+  g <- terra::adjacent(
+    x$dem,
+    cells = terra::cells(x$dem),
+    directions = 8,
+    pairs = TRUE
+  )
+  
+  g <- as.data.frame(g)
+  
+  g <- g[!g$to %in% terra::cells(x$dem, NA_real_)[[1]], ]
+  
+  # distance between cells
+  g$run <- terra::distance(
+    terra::xyFromCell(x$dem, as.vector(g$from)),
+    terra::xyFromCell(x$dem, as.vector(g$to)),
+    lonlat = terra::is.lonlat(x$dem),
+    pairwise = TRUE
+  )
+  
+  # difference between cells
+  g$from_elevation <- terra::extract(x$dem, as.vector(g$from))[,1]
+  
+  g$to_elevation <- terra::extract(x$dem, as.vector(g$to))[,1]
+  
+  g$rise <- g$from_elevation - g$to_elevation
+  
+  # slope
+  g$slope <- g$rise/g$run
+  
+  # what is a realistic slope people would try to hike?
+  if (!is.null(max_slope)) {
+    
+    g <- g[g$slope <= tan(max_slope * pi / 180), ]
+    
+  }
+  
+  g$speed <- campbell(g$slope, ...)
+  
+  g$cost <- g$run/g$speed
+  
+  g <- g[, c("from", "to", "cost")]
+
+  coords <- cbind(
+    ID = terra::cells(x$dem), 
+    terra::xyFromCell(x$dem, terra::cells(x$dem))
+  ) |> 
+    as.data.frame() |> 
+    rename_with(toupper)
+  
+  # force as.character(1000000) to be "1000000" instead of "1e-6"
+  # this fixes problem with makegraph()
+  options(scipen = 9999)
+  
+  x$graph <- makegraph(
+    as.data.frame(g),
+    directed = TRUE,
+    coords = coords
+  )
+  
+  return(x)
+  
+}
+
+campbell <- function(x, decile = 30L) {
+  
+  if (length(decile) != 1) {
+    
+    stop("campbell accepts only one decile at a time.")
+    
+  }
+  
+  # campbell function wants degrees, not rise-over-run as in tobler
+  # but, we're working with rr, so remember to convert radians to degrees with 180/pi!
+  slope <- atan(x) * 180 / pi
+  
+  # values provided in Campbell 2019, Supplement, Table S1
+  # for simplicity, I excluded all but the deciles
+  deciles <-
+    data.frame(
+      decile = c(10L, 20L, 30L, 40L, 50L, 60L, 70L, 80L, 90L),
+      a = c(-1.568, -1.71,  -1.858, -1.958, -2.171, -2.459, -2.823,  -3.371,  -3.06),
+      b = c(13.328, 10.154,  8.412,  8.96,  10.064, 11.311, 12.784,  15.395,  16.653),
+      c = c(38.892, 36.905, 39.994, 50.34,  63.66,  79.287, 98.697, 134.409, 138.875),
+      d = c( 0.404,  0.557,  0.645,  0.649,  0.628,  0.599,  0.566,   0.443,   0.823),
+      e = c(-0.003, -0.004, -0.004, -0.005, -0.005, -0.005, -0.005,  -0.005,  -0.0139)
+    )
+  
+  ind <- which(deciles$decile == as.integer(decile))
+  
+  deciles <- deciles[ind, ]
+  
+  a <- deciles$a
+  b <- deciles$b
+  c <- deciles$c
+  d <- deciles$d
+  e <- deciles$e
+  
+  # lorentz distribution
+  lorentz <- (1 / ((pi * b) * (1 + ((slope - a) / b)^2)))
+  
+  # modified lorentz
+  (c * lorentz) + d + (e * slope)
+  
+}
+
+```
+
+```{r}
+
+cmv <- cmv |> add_graph(max_slope = 45, decile = 10L)
+nrg <- nrg |> add_graph(max_slope = 45, decile = 10L)
+cib <- cib |> add_graph(max_slope = 45, decile = 10L)
+
+```
+
+### Add distance matrix
+
+```{r}
+#| code-fold: true
+
+add_distance_matrix <- function(x){
+  
+  x$sites$cell <- terra::cells(x$dem, terra::vect(x$sites))[,2]
+
+  # use unique cell IDs as some centers are in the same pixel, 
+  # so calculations would be redundant
+  dm <- get_distance_matrix(
+    x$graph,
+    from = x$sites$cell |> unique(),  
+    to = x$sites$cell |> unique()
+  )
+  
+  # make symmetric by averaging off-diagonals
+  d <- cbind(dm[lower.tri(dm)], t(dm)[lower.tri(dm)])
+  
+  dm[lower.tri(dm)] <- rowMeans(d, na.rm = TRUE)
+  dm[upper.tri(dm)] <- t(dm)[upper.tri(dm)]
+  
+  diag(dm) <- 0
+  
+  x$dm <- dm
+  
+  return(x)
+  
+}
+
+```
+
+```{r}
+
+cmv <- cmv |> add_distance_matrix()
+nrg <- nrg |> add_distance_matrix()
+cib <- cib |> add_distance_matrix()
+
+```
+
+```{r}
+#| code-fold: true
+
+get_commutes <- function(x, n){
+  
+  centers <- get_centers(x) |> select(-center)
+  farms   <- get_farms(x) |> select(-center)
+  
+  # subset dm (distance matrix) to get dm[farms, centers]
+  i <- which(rownames(x$dm) %in% farms$cell)
+  j <- which(colnames(x$dm) %in% centers$cell)
+  
+  dm <- x$dm[i, j]
+  
+  observed <- apply(dm, 1, min)
+  observed <- density(observed, kernel = "gaussian", n = 512, from = 0, to = 7200)
+  
+  r <- terra::rast(
+    nrows = nrow(x$dem), 
+    ncols = ncol(x$dem), 
+    extent = ext(x$dem), 
+    crs = crs(x$dem)
+  )
+  
+  dmax <- st_distance(
+    x$sites |> filter(center == 0), 
+    x$sites |> filter(center == 1)
+  ) |> units::drop_units() |> apply(1, min) |> max()
+  
+  i <- cells(
+    x$dem, 
+    x$sites |> filter(center == 1) |> st_buffer(dmax) |> st_union() |> vect()
+  )[, "cell"]
+  
+  i <- i[i %in% x$graph$dict$ref]
+  
+  r[i] <- 1
+  
+  # don't sample cells with centers in them
+  j <- colnames(dm) |> as.numeric()
+  
+  r[j] <- NA
+  
+  random_points <- terra::spatSample(
+    r, 
+    size = n,
+    method = "regular",
+    cells = TRUE,
+    na.rm = TRUE
+  ) |> pull(cell) |> unique()
+  
+  dm <- get_distance_matrix(
+    x$graph,
+    from = random_points,  
+    to = colnames(dm)
+  )
+  
+  # make symmetric by averaging off-diagonals
+  d <- cbind(dm[lower.tri(dm)], t(dm)[lower.tri(dm)])
+  
+  dm[lower.tri(dm)] <- rowMeans(d, na.rm = TRUE)
+  dm[upper.tri(dm)] <- t(dm)[upper.tri(dm)]
+  
+  diag(dm) <- 0
+  
+  expected <- apply(dm, 1, min)
+  expected <- density(expected, kernel = "gaussian", n = 512, from = 0, to = 7200)
+  
+  tibble(
+    region = x$name,
+    distance = observed$x,
+    observed = observed$y,
+    expected = expected$y
+  )
+  
+}
+
+set.seed(1701) # USS Enterprise
+
+commutes <- bind_rows(
+  cmv |> get_commutes(n = 1000),
+  nrg |> get_commutes(n = 1000),
+  cib |> get_commutes(n = 1000)
+)
+
+q <- function(x, p){
+  
+  centers <- get_centers(x) |> select(-center)
+  farms   <- get_farms(x) |> select(-center)
+  
+  # subset dm (distance matrix) to get dm[farms, centers]
+  i <- which(rownames(x$dm) %in% farms$cell)
+  j <- which(colnames(x$dm) %in% centers$cell)
+  
+  dm <- x$dm[i, j]
+  
+  observed <- apply(dm, 1, min)
+  
+  tibble(
+    region = x$name,
+    distance = quantile(observed, p = p) |> unname()
+  )
+  
+}
+
+q95 <- bind_rows(
+  q(cmv, 0.95),
+  q(nrg, 0.95),
+  q(cib, 0.95)
+) |> 
+  mutate(
+    y = c(2.4, 1.8, 1.2),
+    label = case_when(
+      region == "cib" ~ "Cibola",
+      region == "cmv" ~ "Central Mesa Verde",
+      region == "nrg" ~ "Northern Rio Grande",
+      TRUE ~ NA
+    )
+  )
+
+gg <- ggplot() +
+  geom_hline(
+    yintercept = 0,
+    color = "gray75",
+    linewidth = 0.2
+  ) +
+  geom_line(
+    data = commutes, 
+    aes(distance/60, log(observed/expected), color = region), 
+    linewidth = 0.9,
+    lineend = "round"
+  ) +
+  geom_point(
+    data = q95,
+    aes(distance/60, y, color = region),
+    size = 2
+  ) +
+  geom_text(
+    data = q95,
+    aes(distance/60, y, color = region, label = label),
+    vjust = 0.5,
+    hjust = 0,
+    nudge_x = 2,
+    size = 12/.pt
+  ) +
+  scale_color_manual(name = NULL, values = region_colors) +
+  annotate(
+    "point",
+    x = min(q95$distance)/60,
+    y = 3.0,
+    color = "gray25",
+    size = 2
+  ) +
+  annotate(
+    "text",
+    label = "95% Quantile of Observed",
+    x = min(q95$distance)/60 + 2,
+    y = 3.0,
+    color = "gray25",
+    vjust = 0.5,
+    hjust = 0,
+    size = 12/.pt
+  ) +
+  labs(
+    x = "Commute to Nearest Center [mins]",
+    y = "Density\nlog(Observed) - log(Random)"
+  ) +
+  scale_x_continuous(breaks = seq(0, 120, by = 30), expand = expansion(0.03)) +
+  coord_cartesian(xlim = c(0, 120)) +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_line(linewidth = 0.2, color = "gray85")
+  )
+
+fn <- here("figures", "commute-kl.png")
+
+ggsave(
+  plot = gg,
+  filename = fn,
+  width = 5,
+  height = 3.3,
+  dpi = 600
+)
+
+prepare_image(fn)
+
+remove(get_commutes, q, q95, gg)
+
+```
+
+::: {#fig-commutes}
+![](../figures/commute-kl.png){width="60%" fig-alt="Difference between log probability density of obversed commute times from farms to nearest centers and log probability density of commute times from random locations to nearest centers."}
+
+Difference between log probability density of obversed commute times from farms to nearest centers and log probability density of commute times from random locations to nearest centers.
+:::
+
+## Communities
+
+Our community detection algorithm proceeds as follows:
+
+1. Identify community centers   
+2. Identify farms within commute distance 
+3. Join communities to their overlapping neighbors 
+4. Exclude farms closer to another community center (tie-breaking step) 
+5. Draw smallest concave hull encompassing all farms, centers, and paths 
+
+Step 1 is already done and stored in the data.  
+
+### Filter by commute distance
+
+```{r}
+#| code-fold: true
+
+subset_distance_matrix <- function(x){
+  
+  centers <- get_centers(x) |> select(-center)
+  farms   <- get_farms(x) |> select(-center)
+  
+  # subset dm (distance matrix) to get dm[farms, centers]
+  i <- which(rownames(x$dm) %in% farms$cell)
+  j <- which(colnames(x$dm) %in% centers$cell)
+  
+  x$dm[i, j]
+  
+}
+
+filter_distance_matrix <- function(x, d){
+  
+  nearest_farms <- apply(x, 1, \(x){ which(x <= d) })
+  nearest_farms <- lapply(nearest_farms, \(x){ as.numeric(names(x)) })
+  
+  arrow_table(
+    center = unlist(nearest_farms),
+    farm = rep(names(nearest_farms), lengths(nearest_farms)) |> as.numeric()
+  ) |> arrange(center, farm)
+  
+}
+
+find_nearby_farms <- function(x, dmax){
+  
+  x$dmax <- dmax
+  
+  x$nearest_farms <- x |> 
+    subset_distance_matrix() |> 
+    filter_distance_matrix(dmax)
+  
+  sites <- x$sites |> 
+    st_drop_geometry() |> 
+    select(cell, n_room) |> 
+    group_by(cell) |> 
+    summarize(n_room = sum(n_room))
+  
+  x$nearest_farms <- x$nearest_farms |> left_join(sites, by = join_by(farm == cell))
+  
+  return(x)
+  
+}
+
+```
+
+```{r}
+
+# how many seconds in ... ?
+one_hour <- 3600
+
+cmv <- cmv |> find_nearby_farms(dmax = one_hour)
+nrg <- nrg |> find_nearby_farms(dmax = one_hour)
+cib <- cib |> find_nearby_farms(dmax = one_hour)
+
+```
+
+### Find neighboring centers
+
+> For any two centers $C_1$ and $C_2$ with nearby farm room counts $N_1 < N_2$, if $pN_1$ of $C_1$’s rooms are within a distance $d$ of $C_1$ and $C_2$, then $C_1$ is part of the same community as $C_2$.
+
+```{r}
+#| code-fold: true
+
+join_neighboring_centers <- function(x, p, djoin){
+  
+  x$djoin <- djoin
+  
+  nearest_farms <- x |> 
+    subset_distance_matrix() |> 
+    filter_distance_matrix(djoin)
+  
+  sites <- x$sites |> 
+    st_drop_geometry() |> 
+    select(cell, n_room) |> 
+    group_by(cell) |> 
+    summarize(n_room = sum(n_room))
+  
+  nearest_farms <- nearest_farms |> left_join(sites, by = join_by(farm == cell))
+  
+  remove(sites)
+  
+  room_counts <- nearest_farms |> 
+    group_by(center) |> 
+    summarize(n_room = sum(n_room)) |> 
+    collect()
+  
+  R <- outer(room_counts$n_room, room_counts$n_room, FUN = '<=')
+  diag(R) <- FALSE
+  
+  colnames(R) <- room_counts$center
+  rownames(R) <- room_counts$center
+  
+  R <- apply(R, 1, which)
+  R <- lapply(R, \(x){ as.numeric(names(x)) })
+  
+  neighbors_matrix <- imap(R, \(x, idx){
+    
+    N <- room_counts |> filter(center == as.numeric(idx)) |> pull(n_room)
+    
+    focal_farms <- nearest_farms |> 
+      filter(center == as.numeric(idx)) |> 
+      collect() |> 
+      pull(farm)
+
+    cntrs <- nearest_farms |> 
+      filter( # this filter gives the intersection of farms/cells 
+        center %in% x,
+        farm %in% focal_farms
+      ) |> 
+      group_by(center) |> 
+      summarize(proportion = sum(n_room)/N) |> 
+      filter(proportion >= p) |> 
+      collect() |> 
+      pull(center)
+    
+    names(R) %in% cntrs
+    
+  })
+  
+  neighbors_matrix <- do.call("rbind", neighbors_matrix)
+  diag(neighbors_matrix) <- TRUE
+  
+  colnames(neighbors_matrix) <- names(R)
+  rownames(neighbors_matrix) <- names(R)
+  
+  # igraph...
+  g <- igraph::graph.adjacency(neighbors_matrix)
+  membership <- igraph::components(g)$membership
+  
+  x$lookup <- tibble(
+    center = names(membership) |> as.numeric(),
+    community = unname(membership)
+  )
+  
+  return(x)
+  
+}
+
+```
+
+```{r}
+
+# how many seconds in ... ?
+half_hour <- 1800
+
+cmv <- cmv |> join_neighboring_centers(p = 0.8, djoin = half_hour)
+nrg <- nrg |> join_neighboring_centers(p = 0.8, djoin = half_hour)
+cib <- cib |> join_neighboring_centers(p = 0.8, djoin = half_hour)
+
+```
+
+### Find nearest center
+
+```{r}
+#| code-fold: true
+
+find_nearest_center <- function(x){
+
+  farms_to_centers <- subset_distance_matrix(x)
+    
+  # find the nearest center for each farm
+  nearest_center <- apply(farms_to_centers, 1, \(x) which.min(x))
+  nearest_center <- colnames(farms_to_centers)[nearest_center]
+  
+  distance <- apply(farms_to_centers, 1, min)
+  
+  x$nearest_center <- tibble(
+    farm = farms_to_centers |> rownames() |> as.numeric(),
+    center = nearest_center |> as.numeric(),
+    distance = unname(distance)
+  ) |> filter(distance <= x$dmax)
+
+  return(x)
+  
+}
+
+```
+
+```{r}
+
+cmv <- cmv |> find_nearest_center() 
+nrg <- nrg |> find_nearest_center() 
+cib <- cib |> find_nearest_center() 
+
+```
+
+### Define boundaries
+
+Now that we have each farm associated with its nearest community center, and each center joined with its neighbors, assuming it has any, we can define a boundary for the community using a concave hull. We choose a concave rather than convex hull because the latter tends to artificially inflate the size of the community, often to a significant degree. On the other hand, the concave hull can generate extremely unrealistic shapes for communities. To avoid these issues, we first compute the least-cost path between each farm in the community and every other farm in the community. We then add the vertices that define these paths as virtual points to the community. We then generate the concave hull for the expanded set of community points. The consequence is that an individual setting off from one farm in the community to another should never have to leave the community. Their walk will always be within the community boundary.  
+
+The result is still not perfect, however, so we further simplify polygons (including filling holes) by adding then removing a small buffer. Two things to note here: (1) we project the boundaries first as Google's `S2` system for geocomputations on the sphere (the default now in `{sf}`) is janky with how it does buffering and (2) we add a small buffer to smooth some of the noise in the hull.
+
+```{r}
+#| code-fold: true
+
+collect_members <- function(x){
+  
+  lookup <- x$lookup
+  
+  centers <- get_centers(x) |> 
+    left_join(lookup, by = join_by(cell == center)) |> 
+    select(site_id, n_room, initial_phase, final_phase, community) |> 
+    filter(!is.na(community)) |> 
+    mutate(type = "center")
+  
+  farms <- get_farms(x) |> 
+    select(-center) |> 
+    left_join(x$nearest_center, by = join_by(cell == farm)) |> 
+    left_join(lookup, by = "center") |> 
+    select(site_id, n_room, initial_phase, final_phase, community) |> 
+    filter(!is.na(community)) |> 
+    mutate(type = "farm")
+  
+  x$members <- bind_rows(farms, centers) |> 
+    arrange(community, site_id) |> 
+    left_join(x$sites[, "site_id"], by = "site_id") |> 
+    mutate(region = x$name, .before = everything()) |> 
+    st_sf()
+      
+  return(x)
+  
+}
+
+define_boundaries <- function(x, concavity_ratio, dilate){
+  
+  community_ids <- x$members |> pull(community) |> unique()
+  
+  communities <- vector("list", length(community_ids))
+  
+  # cli::cli_progress_bar(
+  #   "Define boundaries", 
+  #   total = length(community_ids)
+  # )
+  
+  for (i in community_ids){
+    
+    m <- x$members |> filter(community == i)
+    
+    cells <- terra::cells(x$dem, vect(m))[, 2] |> unique()
+    
+    paths <- get_multi_paths(
+      x$graph, 
+      from = cells, 
+      to = cells
+    )
+    
+    paths <- paths |> unlist(recursive = TRUE) |> as.numeric() |> unique()
+    
+    xy <- rbind(
+      terra::xyFromCell(x$dem, paths),
+      st_coordinates(m)[, 1:2]
+    )
+    
+    xy <- xy |> st_multipoint() |> st_sfc(crs = st_crs(m)) |> st_cast("POINT")
+    
+    m <- st_geometry(m)
+    
+    border <- st_sf(geometry = c(xy, m)) |> 
+      summarize() |> 
+      st_concave_hull(ratio = concavity_ratio) |> 
+      mutate(community = i)
+    
+    communities[[i]] <- border
+    
+    remove(i, m, cells, paths, xy, border)
+    
+    # cli::cli_progress_update()
+    
+  }
+
+  x$communities <- communities |> 
+    bind_rows() |> 
+    st_transform(x$preferred_projection) |> 
+    st_buffer(dilate[1]) |> 
+    st_buffer(dilate[2]) |> 
+    st_transform(4326) |> 
+    mutate(region = x$name, .before = "community")
+  
+  return(x)
+  
+}
+
+```
+
+```{r}
+
+cmv <- cmv |> 
+  collect_members() |> 
+  define_boundaries(concavity_ratio = 0.1, dilate = c(130, -100))
+
+nrg <- nrg |> 
+  collect_members() |> 
+  define_boundaries(concavity_ratio = 0.1, dilate = c(130, -100))
+
+cib <- cib |> 
+  collect_members() |> 
+  define_boundaries(concavity_ratio = 0.1, dilate = c(130, -100))
+
+```
+
+### Drop small communities
+
+```{r}
+#| code-fold: true
+
+drop_small_communities <- function(x, threshold){
+  
+  final_list <- x$members |> 
+    st_drop_geometry() |> 
+    filter(type == "farm") |> 
+    group_by(community) |> 
+    summarize(n = n()) |> 
+    filter(n > threshold) |> 
+    pull(community)
+  
+  x$communities <- x$communities |> filter(community %in% final_list)
+  
+  x$members <- x$members |> st_filter(x$communities)
+  
+  return(x)
+  
+}
+
+```
+
+```{r}
+
+cmv <- cmv |> drop_small_communities(threshold = 3)
+nrg <- nrg |> drop_small_communities(threshold = 3)
+cib <- cib |> drop_small_communities(threshold = 3)
+
+```
+
+## Results
+
+Here we show the community polygons themselves as well as the log-density of rooms in each.
+
+```{r}
+#| code-fold: true
+
+visualize_communities <- function(x, lbl = region_labels){
+  
+  hell <- function(x, n = 1000){
+    
+    slope <- terrain(x, "slope", unit = "radians")
+    aspect <- terrain(x, "aspect", unit = "radians")
+    
+    hill <- shade(slope, aspect, 30, 45)
+    hill <- setValues(hill, scales::rescale(values(hill), to = c(1, n)))
+    hill <- round(hill)
+    
+    list(
+      shade = hill,
+      grays = hcl.colors(n, "Grays")[values(hill)]
+    )
+    
+  }
+  
+  h <- hell(x$dem)
+  
+  members <- x$members |> 
+    st_drop_geometry() |> 
+    group_by(community) |> 
+    summarize(n_room = sum(n_room))
+  
+  communities <- x$communities |> 
+    left_join(members, by = "community") |> 
+    mutate(
+      area = st_area(geometry) |> units::set_units(km2) |> units::drop_units(),
+      density = n_room/area,
+      density = log(density+1),
+      density = cut(density, 9, labels = FALSE)
+    )
+  
+  ggplot() +
+    ggtitle(lbl(x$name)[[1]]) +
+    geom_spatraster(
+      data = h$shade, 
+      fill = h$grays,
+      maxcell = Inf
+    ) +
+    geom_spatraster(data = x$dem, alpha = 0.5,) +
+    scale_fill_distiller(palette = "Greys", guide = "none") +
+    ggnewscale::new_scale_fill() +
+    geom_sf(
+      data = communities,
+      fill = "transparent",
+      color = "white",
+      alpha = 0.1,
+      linewidth = 0.5
+    ) +
+    geom_sf(
+      data = communities,
+      aes(fill = density, color = density),
+      linewidth = 0.1
+    ) + 
+    scale_color_gradientn(
+      name = "Log Density", 
+      colors = RColorBrewer::brewer.pal(9, "YlOrBr"),
+      breaks = c(1, 5, 9),
+      labels = c("Low", "Medium", "High"),
+      guide = guide_legend()
+    ) +
+    scale_fill_gradientn(
+      name = "Log Density", 
+      colors = RColorBrewer::brewer.pal(9, "YlOrBr") |> alpha(0.6),
+      breaks = c(1, 5, 9),
+      labels = c("Low", "Medium", "High"),
+      guide = guide_legend()
+    ) +
+    annotation_scale(
+      aes(location = "bl", line_col = "white", text_col = "white"),
+      height = unit(0.18, "cm"),
+      line_width = 0.5
+    ) +
+    coord_sf(expand = FALSE) +
+    theme(
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      axis.title = element_blank(),
+      legend.key = element_rect(color = "gray30", fill = "transparent"),
+      plot.margin = margin(l = 2)
+    )
+
+}
+
+zg <- list(cmv, nrg, cib) |> 
+  map(visualize_communities) |> 
+  patchwork::wrap_plots(ncol = 3)
+
+# patchwork is great, but not perfect...
+bob <- theme(
+  legend.box.margin = margin(t = -10),
+  legend.key.size = unit(0.5, "cm"),
+  legend.margin = margin(),
+  legend.justification = "left",
+  legend.position = "bottom"
+)
+
+# had to fiddle with this to get the sizes consistent with the overview maps
+fn <- here("figures", "communities-all.png")
+
+ggsave(
+  plot = zg + plot_layout(guides = "collect") & bob,
+  filename = fn,
+  width = 7.5, 
+  height = 4.5,
+  dpi = 600,
+  bg = "white"
+)
+
+prepare_image(fn)
+
+remove(visualize_communities, zg, bob, fn)
+
+```
+
+::: {#fig-communities}
+![](../figures/communities-all.png){width="100%" fig-alt="Map shows defined community boundaries with fill colors representing the log density of rooms in each."}
+
+Map shows defined community boundaries with fill colors representing the log density of rooms in each.
+:::
+
+### Community Distributions
+
+```{r}
+#| code-fold: true
+
+get_community_data <- function(x){
+  
+  # AREA
+  A <- x$communities |> 
+    st_area() |> 
+    units::set_units(km2) |> 
+    units::drop_units()
+  
+  tbl_area <- tibble(
+    region = x$name, 
+    community = x$communities$community,
+    area = A
+  )
+  
+  # ROOMS
+  tbl_rooms <- x$sites |> 
+    st_join(x$communities[, "community"]) |> 
+    select(region, community, n_room) |> 
+    st_drop_geometry() |> 
+    group_by(community) |> 
+    summarize(
+      region = unique(region),
+      n_room = sum(n_room)
+    ) |> 
+    relocate(region)
+  
+  # FARMS
+  tbl_sites <- x$members |> 
+    st_drop_geometry() |> 
+    filter(type == "farm") |> 
+    group_by(community) |> 
+    summarize(n_farm = n(), region = unique(region))
+  
+  # CENTERS
+  tbl_centers <- x$members |> 
+    st_drop_geometry() |> 
+    filter(type == "center") |> 
+    group_by(community) |> 
+    summarize(n_center = n(), region = unique(region))
+  
+  # COMMUTES
+  cell_lookup <- x$sites |> 
+    st_drop_geometry() |> 
+    select(site_id, cell)
+  
+  tbl_commutes <- x$members |> 
+    st_drop_geometry() |> 
+    filter(type == "center") |> 
+    left_join(cell_lookup, by = "site_id") |> 
+    left_join(x$nearest_center, by = join_by(cell == center), relationship = "many-to-many") |> 
+    group_by(community) |> 
+    summarize(commute = mean(distance, na.rm = TRUE), region = unique(region))
+
+  # GATHER EVERYTHING INTO ONE TABLE
+  tbl_area |> 
+    left_join(tbl_rooms, by = c("region", "community")) |> 
+    left_join(tbl_sites, by = c("region", "community")) |>
+    left_join(tbl_centers, by = c("region", "community")) |> 
+    left_join(tbl_commutes, by = c("region", "community")) |> 
+    mutate(room_density = n_room/area)
+  
+}
+
+```
+
+```{r}
+
+results <- list(cmv, nrg, cib) |> map(get_community_data) |> bind_rows()
+
+```
+
+```{r}
+#| code-fold: true
+
+results |> 
+  mutate(commute = commute/60) |> 
+  group_by(region) |> 
+  summarize(across(area:room_density, list("η" = median, "µ" = mean, "σ" = sd))) |> 
+  rename_with(str_remove, pattern = "n_|room_") |> 
+  pivot_longer(
+    !region,
+    names_to = c("variable", "statistic"),
+    names_sep = "_"
+  ) |> 
+  pivot_wider(
+    names_from = "variable",
+    values_from = "value"
+  ) |> 
+  mutate(across(area:density, \(x) paste0(statistic, ": ", round(x,2)))) |> 
+  group_by(region) |> 
+  summarize(across(area:density, \(x) paste0(x, collapse = "<br>"))) |> 
+  rename(
+    " " = region,
+    "Area (km2)" = area,
+    "Rooms (N)" = room,
+    "Farms (N)" = farm,
+    "Centers (N)" = center,
+    "Commute (mins)" = commute,
+    "Room Density (N/km2)" = density
+  ) |> 
+  slice(c(2, 3, 1)) |> 
+  gt() |> 
+  tab_header(
+    title = "Community summaries",
+    subtitle = md("η = median, µ = mean, σ = standard deviation")
+  ) |> 
+  fmt_markdown(columns = everything()) |> 
+  cols_width(
+    " " ~ pct(8),
+    "Area (km2)" ~ pct(13),
+    "Rooms (N)" ~ pct(13),
+    "Farms (N)" ~ pct(13),
+    "Centers (N)" ~ pct(13),
+    "Commute (mins)" ~ pct(18),
+    "Room Density (N/km2)" ~ pct(22)
+  ) |> 
+  opt_align_table_header("left")
+
+```
+
+```{r}
+#| eval: false
+#| echo: false
+
+# this code is just for exploring communities
+# and associating important (re: named) centers with them
+plot_labels <- function(x){
+  
+  ggplot(x$communities) +
+    geom_sf() +
+    geom_sf_label(aes(label = community)) +
+    theme_void()
+  
+}
+
+get_members <- function(x){
+  
+  x$members |> 
+    st_drop_geometry() |> 
+    mutate(region = x$name, .before = everything())
+  
+}
+
+get_sites <- function(x){ x$sites |> st_drop_geometry() }
+
+results |> 
+  group_by(region) |> 
+  slice_max(room_density, n = 5) |> 
+  left_join(
+    map(list(cmv, nrg, cib), get_members) |> bind_rows(), 
+    by = c("region", "community")
+  ) |> 
+  left_join(
+    map(list(cmv, nrg, cib), get_sites) |> bind_rows() |> filter(center == 1), 
+    by = c("region", "site_id")
+  ) |> 
+  select(region, community, site_id, site_name, area) |> 
+  filter(region == "cib") |> View()
+
+```
+
+```{r}
+#| code-fold: true
+
+lbls <- results |> 
+  group_by(region) |> 
+  summarize(x = quantile(area/n_center, p = 0.75)) |> 
+  mutate(
+    variable = "center_area",
+    y = c(1.25, 3.25, 2.25),
+    label = case_when(
+      region == "cib" ~ "Cibola",
+      region == "cmv" ~ "Central Mesa Verde",
+      region == "nrg" ~ "Northern Rio Grande",
+      TRUE ~ region
+    )
+  )
+
+lblr <- as_labeller(c(
+  "commute" = "Mean Commute to Nearest Center [mins]",
+  "room_density" = "Room Density [N/km2]",
+  "farm_area" = "Mean Area for Farms [km2/N]",
+  "center_area" = "Mean Area for Centers [km2/N]",
+  "farm_ratio" = "Ratio of Farms [N] to Centers [N]",
+  "area" = "Total Area [km2]"
+))
+
+gg <- results |> 
+  mutate(
+    farm_area = area/n_farm,
+    center_area = area/n_center,
+    commute = commute/60,
+    farm_ratio = n_farm/n_center
+  ) |> 
+  select(-n_room, -n_farm, -n_center) |> 
+  pivot_longer(c(-region, -community), names_to = "variable") |> 
+  ggplot() + 
+  geom_boxplot(aes(
+    x = value, 
+    y = fct_relevel(region, "cib", "nrg"), 
+    fill = region
+  )) +
+  geom_text(
+    data = lbls,
+    aes(x, y, label = label, color = region),
+    size = 11.5/.pt,
+    nudge_x = 1,
+    hjust = 0
+  ) +
+  scale_color_manual(values = region_colors) +
+  scale_fill_manual(values = alpha(region_colors, 0.6)) +
+  labs(
+    x = NULL,
+    y = NULL
+  ) +
+  facet_wrap(
+    vars(variable), 
+    ncol = 2, 
+    nrow = 3,
+    scale = "free_x",
+    strip.position = "bottom",
+    labeller = lblr
+  ) +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.position = "none",
+    panel.grid.major.x = element_line(linewidth = 0.2, color = "gray85"),
+    strip.placement = "outside",
+    strip.text = element_text(size = rel(1), margin = margin(t = -1, b = 10))
+  )
+
+fn <- here("figures", "results-boxplot.png")
+
+ggsave(
+  plot = gg,
+  filename = fn,
+  width = 6.5,
+  height = 7.0,
+  dpi = 600
+)
+
+prepare_image(fn)
+
+remove(lbls, lblr, gg, fn)
+
+```
+
+::: {#fig-distributions}
+![](../figures/results-boxplot.png){width="75%" fig-alt="Distributions of important variables across communities and regions."}
+
+Distributions of important variables across communities and regions.
+:::
+
+### Save results
+
+```{r}
+
+bind_rows(
+  cmv$members |> mutate(region = "cmv", .before = site_id),
+  nrg$members |> mutate(region = "nrg", .before = site_id),
+  cib$members |> mutate(region = "cib", .before = site_id)
+) |> 
+  st_drop_geometry() |> 
+  write_sf(gpkg, layer = "members")
+
+bind_rows(
+  cmv$communities, 
+  nrg$communities, 
+  cib$communities
+) |> 
+  left_join(results, by = c("region", "community")) |> 
+  write_sf(gpkg, layer = "communities")
+
+```
+
+## Session Info
+
+```{r}
+#| code-fold: true
+
+# save the session info as an object
+pkg_sesh <- sessioninfo::session_info(pkgs = "attached")
+
+# inject the quarto info
+pkg_sesh$platform$quarto <- paste(
+  quarto::quarto_version(), 
+  "@", 
+  quarto::quarto_path()
+)
+
+# print it out
+pkg_sesh
+
+```
