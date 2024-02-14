@@ -21,23 +21,63 @@ execute:
   error: false
 ---
 
+```{r}
+#| echo: false
+
+# allow for timing code chunks
+# see https://bookdown.org/yihui/rmarkdown-cookbook/time-chunk.html
+knitr::knit_hooks$set(time_it = local({
+  
+  function(before, options) {
+    
+    if(before) {
+      
+      assign('.start_time', Sys.time(), envir = .GlobalEnv)
+      
+    } else {
+      
+      proc_time <- difftime(Sys.time(), .start_time, units = "secs")
+      proc_time <- round(as.numeric(proc_time), 2)
+      proc_time <- lubridate::duration(proc_time, "seconds")
+      
+      style <- "'text-align: right; font-size: 70%; color: rgba(55,58,60,.75)'"
+      
+      txt <- paste0("Code execution time: ", proc_time)
+      
+      paste0("<p style=", style, ">", txt, "</p>")
+      
+    }
+    
+  }
+  
+}))
+
+```
+
 ## Introudction
 
-**Goal:** identify geographic communities  
+**Goal:** identify geographic communities
 
-**Data:** VEPII and Cibola databases  
+**Data:** VEPII and Cibola databases
 
-**Method:** using a somewhat novel clustering algorithm outlined below  
+**Method:** using a somewhat novel clustering algorithm outlined below
 
-This document is setup so that it focuses on the actual steps of the analysis, using verbose names for functions that should make their purpose clear. You can also dig into what each function does by unfolding the relevant code chunk. The critical R package for doing path analysis is [`cppRouting`](https://github.com/vlarmet/cppRouting). It's optimized for road networks, but still very fast. Someone should write a path-finding package (maybe using Rust?) optimized for grid networks... 
+This document is setup so that it focuses on the actual steps of the analysis,
+using verbose names for functions that should make their purpose clear. You can
+also dig into what each function does by unfolding the relevant code chunk. The
+critical R package for doing path analysis is
+[`cppRouting`](https://github.com/vlarmet/cppRouting). It's optimized for road
+networks, but still very fast. Someone should write a path-finding package
+(maybe using Rust?) optimized for grid networks...
 
 ## R Preamble
 
 ```{r}
 
-library(arrow)
 library(cppRouting)
+library(furrr)
 library(ggfx)
+library(ggh4x)
 library(ggnewscale)
 library(ggspatial)
 library(gt)
@@ -52,6 +92,23 @@ library(tidyverse)
 
 ```
 
+```{r}
+
+# cppRouting uses as.character() on node IDs, which is fine,
+# but as.character(1000000) leads to "1e-6" instead of "1000000", and
+# this can lead to issues when matching IDs
+# to fix this, just remove the use of scientific notation
+options(scipen = 9999)
+
+# suppress progress bar and other terra output
+terra::terraOptions(progress = 0, print = FALSE)
+
+# for the sensitivity analysis, we run the entire workflow for each region in 
+# its own R session, hopefully to speed things up
+plan(multisession, workers = 3)
+
+```
+
 Some ggplot defaults
 
 ```{r}
@@ -63,10 +120,38 @@ region_colors <- c(
   "nrg" = "#9B70FF"
 )
 
-region_labels <- as_labeller(c(
+region_labels <- c(
   "cmv" = "Central Mesa Verde",
   "nrg" = "Northern Rio Grande",
   "cib" = "Cibola"
+)
+
+pretty_labels <- as_labeller(c(
+  "n_communities" = "No. of Communities",
+  "commute" = "Mean Commute to Nearest Center [mins]",
+  "room_density" = "Room Density [N/sq.km]",
+  "farm_area" = "Mean Area for Farms [sq.km/N]",
+  "center_area" = "Mean Area for Centers [sq.km/N]",
+  "farm_ratio" = "Ratio of Farms [N] to Centers [N]",
+  "area" = "Total Area [sq.km]",
+  "djoin" = "D-join [mins]",
+  "dmax" = "D-max [mins]",
+  "p" = "p [proportion in D-join]",
+  "agg_factor" = "Grid Resolution [m]"
+))
+
+squished_labels <- as_labeller(c(
+  "n_communities" = "No. of\nCommunities",
+  "commute" = "Mean Commute\nto Nearest Center\n[mins]",
+  "room_density" = "Room Density\n[N/sq.km]",
+  "farm_area" = "Mean Area\nfor Farms [sq.km/N]",
+  "center_area" = "Mean Area\nfor Centers [sq.km/N]",
+  "farm_ratio" = "Ratio of\nFarms [N] to Centers [N]",
+  "area" = "Total Area\n[sq.km]",
+  "djoin" = "D-join\n[mins]",
+  "dmax" = "D-max\n[mins]",
+  "p" = "p\n[prop. in D-join]",
+  "agg_factor" = "Grid Resolution\n[m]"
 ))
 
 theme_set(theme_bw())
@@ -83,25 +168,27 @@ theme_update(
   strip.text = element_text(size = rel(1))
 )
 
-# trim all white space around image, but then add a few white pixels back (dx, dy)
+# trim all white space around image, 
+# but then add a few white pixels back (dx, dy)
+# all done with the magic of {magick}
 prepare_image <- function(x, dx = 2, dy = 30, color = "white") {
   
-  img <- magick::image_read(path = x)
+  img <- image_read(path = x)
   
-  img <- magick::image_trim(img)
+  img <- image_trim(img)
   
-  info <- magick::image_info(img)
+  info <- image_info(img)
     
-  new_width <- info$width + dx
-  new_height <- info$height + dy
+  new_width <- info[["width"]] + dx
+  new_height <- info[["height"]] + dy
   
-  img <- magick::image_extent(
+  img <- image_extent(
     img, 
     geometry_area(new_width, new_height), 
     color = color
   )
   
-  magick::image_write(img, path = x)
+  image_write(img, path = x)
   
 }
 
@@ -109,10 +196,16 @@ prepare_image <- function(x, dx = 2, dy = 30, color = "white") {
 
 ## Data
 
+The necessary data for the analysis include a polygon defining the region of
+interest, the point locations of farms and centers, and a digital elevation
+model (DEM).
+
 ```{r}
 #| code-fold: true
 
-build_region <- function(gpkg, region){
+build_region <- function(region){
+  
+  gpkg <- here("data", "community-centers.gpkg")
   
   region_query <- paste0("SELECT * FROM regions WHERE region = '", region, "'")
   r <- read_sf(gpkg, query = region_query)
@@ -120,85 +213,101 @@ build_region <- function(gpkg, region){
   site_query <- paste0("SELECT * FROM sites WHERE region = '", region, "'")
   s <- read_sf(gpkg, query = site_query) |> st_filter(r)
   
-  if ("communities" %in% st_layers(gpkg)$name){
-    
-    community_query <- paste0("SELECT * FROM communities WHERE region = '", region, "'")
-    t <- read_sf(gpkg, query = community_query) |> st_filter(r)
-    
-  } else {
-    
-    t <- NULL
-    
-  }
+  dem <- here("data", paste0("dem-", region, ".tif")) |> rast()
   
-  list(
-    name = region,
-    preferred_projection = ifelse(region == "nrg", 26913, 26912),
+  region_list <- list(
     region = r,
     sites = s,
-    communities = t
+    dem = dem
   )
   
-}
-
-add_elevation <- function(x){
+  # save metadata
+  prj <- ifelse(region == "nrg", 26913, 26912)
   
-  dem_fn <- paste0("dem-", x$name, ".tif")
-  x$dem <- here("data", dem_fn) |> rast()
+  class(region_list) <- "region"
   
-  return(x)
+  attr(region_list, "name") <- region
+  attr(region_list, "preferred_projection") <- prj
+  attr(region_list, "grid_crs") <- st_crs(crs(dem))$epsg
   
-}
-
-# getters
-get_farms <- function(x){
-  
-  x$sites |> 
-    st_drop_geometry() |> 
-    filter(center == 0)
-  
-}
-
-get_centers <- function(x){
-  
-  x$sites |> 
-    st_drop_geometry() |> 
-    filter(center == 1)
+  region_list
   
 }
 
 ```
 
 ```{r}
+#| eval: false
+#| include: false
 
-gpkg <- here("data", "community-centers.gpkg")
+# this is just for my own use while running this code interactively
+print.region <- function(x, ...){
+  
+  attrs <- attributes(x)
+  
+  n_farms <- x[["sites"]] |> filter(center == 0) |> nrow()
+  n_centers <- x[["sites"]] |> filter(center == 1) |> nrow()
+  
+  list_stuff <- map(attrs[['names']], \(.y){
+    
+    has_class <-  class(x[[.y]])[1]
+    
+    paste0(.y, " (", has_class, ")")
+    
+  }) |> unlist()
 
-cmv <- build_region(gpkg, "cmv") |> add_elevation()
-nrg <- build_region(gpkg, "nrg") |> add_elevation()
-cib <- build_region(gpkg, "cib") |> add_elevation()
+  cli::cli_h2("Study Area Metadata")
+  cli::cli_text("Region: {attrs[['name']]}")
+  cli::cli_text("No. of farms: {n_farms}")
+  cli::cli_text("No. of centers: {n_centers}")
+  cli::cli_h3("Spatial Data")
+  cli::cli_text("Grid CRS: {attrs[['grid_crs']]}")
+  cli::cli_text("Preferred Projection: {attrs[['preferred_projection']]}")
+  cli::cli_text("Aggregation Factor: {attrs[['agg_fact']]}")
+  cli::cli_text("Max Slope: {attrs[['max_slope']]}")
+  cli::cli_h3("Clustering Parameters")
+  cli::cli_text("D-max: {attrs[['dmax']]} s")
+  cli::cli_text("No. of outliers: {attrs[['n_outliers']]}")
+  cli::cli_text("D-join: {attrs[['djoin']]} s")
+  cli::cli_text("P: {attrs[['proportion']]}")
+  cli::cli_text("Min. no. of farms: {attrs[['min_size']]}")
+  cli::cli_h3("Community Data")
+  cli::cli_text("No. of communities: {attrs[['n_communities']]}")
+  cli::cli_text("No. dropped: {attrs[['n_dropped']]}")
+  cli::cli_text("Concavity: {attrs[['concavity']]}")
+  cli::cli_text("Dilation: {attrs[['dilate']]} m (out, in)")
+  cli::cli_text("")
+  cli::cli_text("List includes: {list_stuff}")
+
+}
+
+```
+
+```{r}
+#| time_it: true
+
+cmv <- build_region("cmv")
+nrg <- build_region("nrg")
+cib <- build_region("cib")  
 
 ```
 
 ```{r}
 #| code-fold: true
 
-e <- function(x){
-  
-  tibble(
-    region = x$name,
-    min =  terra::global(x$dem, min, na.rm = TRUE)$min,
-    max =  terra::global(x$dem, max, na.rm = TRUE)$max,
-    mean = terra::global(x$dem, mean, na.rm = TRUE)$mean,
-    sd =   terra::global(x$dem, sd, na.rm = TRUE)$sd
-  )
-  
-}
-
-bind_rows(
-  e(cmv),
-  e(nrg),
-  e(cib)
-) |> 
+list(cmv, nrg, cib) |> 
+  map(\(x){
+    
+    tibble(
+      region = attr(x, "name"),
+      min =  global(x[["dem"]], min, na.rm = TRUE)$min,
+      max =  global(x[["dem"]], max, na.rm = TRUE)$max,
+      mean = global(x[["dem"]], mean, na.rm = TRUE)$mean,
+      sd =   global(x[["dem"]], sd, na.rm = TRUE)$sd
+    )
+    
+  }) |> 
+  bind_rows() |> 
   gt() |> 
   tab_header("Elevation") |> 
   fmt_number(-region, decimals = 1) |> 
@@ -209,33 +318,22 @@ bind_rows(
 ```{r}
 #| code-fold: true
 
-plot_region <- function(x){
+plot.region <- function(x, ...){
   
-  hell <- function(x, n = 1000){
-    
-    slope <- terrain(x, "slope", unit = "radians")
-    aspect <- terrain(x, "aspect", unit = "radians")
-    
-    hill <- shade(slope, aspect, 30, 45)
-    hill <- setValues(hill, scales::rescale(values(hill), to = c(1, n)))
-    hill <- round(hill)
-    
-    list(
-      shade = hill,
-      grays = hcl.colors(n, "Grays")[values(hill)]
-    )
-    
-  }
+  slope <- terrain(x[["dem"]], "slope", unit = "radians")
+  aspect <- terrain(x[["dem"]], "aspect", unit = "radians")
   
-  h <- hell(x$dem)
+  hill <- shade(slope, aspect, 30, 45)
+  hill <- setValues(hill, scales::rescale(values(hill), to = c(1, 1000)))
+  hill <- round(hill)
   
   ggplot() +
     geom_spatraster(
-      data = h$shade, 
-      fill = h$grays,
+      data = hill, 
+      fill = hcl.colors(1000, "Grays")[values(hill)],
       maxcell = Inf
     ) +
-    geom_spatraster(data = x$dem, alpha = 0.5) +
+    geom_spatraster(data = x[["dem"]], alpha = 0.5) +
     scale_fill_hypso_c(
       name = "Elevation (m)",
       palette = "utah_1",
@@ -245,7 +343,7 @@ plot_region <- function(x){
     ) +
     with_outer_glow(
       geom_sf(
-        data = x$sites |> filter(center == 0),
+        data = x[["sites"]] |> filter(center == 0),
         shape = 16,
         color = "gray25",
         alpha = 0.5,
@@ -257,7 +355,7 @@ plot_region <- function(x){
     ) +
     with_outer_glow(
       geom_sf(
-        data = x$sites |> filter(center == 1),
+        data = x[["sites"]] |> filter(center == 1),
         shape = 17,
         color = "#CD3C00",
         alpha = 0.8,
@@ -283,9 +381,9 @@ plot_region <- function(x){
   
 }
 
-gg <- (plot_region(cmv) + ggtitle("Central Mesa Verde")) +
-  (plot_region(nrg) + ggtitle("Northern Rio Grande")) + 
-  (plot_region(cib) + ggtitle("Cibola"))
+gg <- (plot(cmv) + ggtitle("Central Mesa Verde")) +
+  (plot(nrg) + ggtitle("Northern Rio Grande")) + 
+  (plot(cib) + ggtitle("Cibola"))
 
 fn <- here("figures", "overview-maps.png")
 
@@ -300,176 +398,263 @@ ggsave(
 
 prepare_image(fn)
 
-remove(plot_region, gg, fn)
+remove(plot.region, gg, fn)
 
 ```
 
 ::: {#fig-overview}
-![](../figures/overview-maps.png){width="100%" fig-alt="An overview map showing the distribution of farms and community centers across the three study areas."}
+![](../figures/overview-maps.png){width="100%"
+fig-alt="An overview map showing the distribution of farms and community centers across the three study areas."}
 
-An overview map showing the distribution of farms and community centers across the three study areas.
+An overview map showing the distribution of farms and community centers across
+the three study areas.
 :::
 
 ## Graph
 
-It's important to note that throughout we track movement between grid cells, not site points. 
+It's important to note that throughout we track movement between grid cells, not
+site points. So, all site points that fall into the same grid cell are assumed
+to be the same location, and if any of those sites are centers, then the whole
+place is considered a center.
 
 ### Convert grid to graph
+
+Before converting the grid to a graph, we aggregate grid cells. Aggregating
+reduces the resolution of the grid and by extension the number of grid cells the
+raster contains. Since the grid cells are nodes in the grid graph, aggregating
+simplifies the graph as well. This speeds up the path analysis considerably, but
+it does come at the cost of precision in terms of path analysis across the
+landscape, but that is not as bad as it sounds. The idea that we could build a
+model that is perfectly isomorphic with the actual or true path taken by people
+a thousand years ago is wildly implausible. The idea of the 'true path' is also
+problematic as we're not evaluating a single commute, but rather the path people
+should take more often than not. So, the real question is what level of
+precision is sufficient for evaluating that. And the answer is, of course, it
+just depends.
+
+Are you walking blindfolded along the edge of a deep, precipitous cliff? Then
+centimeters are probably important to you - really, really important to you. But
+if you're just trying to get a reasonable estimate of the agricultural catchment
+of an entirely pedestrian population based on the distribution of farms around
+urban centers, probably the difference between \~30 m and \~80 m grid cells
+isn't that big of a deal. If that doesn't convince you, though, we do some
+limited sensitivity analysis down below.
 
 ```{r}
 #| code-fold: true
 
-add_graph <- function(x, max_slope = NULL, ...){
+aggregate_grid <- function(x, .factor){
   
-  g <- terra::adjacent(
-    x$dem,
-    cells = terra::cells(x$dem),
-    directions = 8,
-    pairs = TRUE
-  )
-  
-  g <- as.data.frame(g)
-  
-  g <- g[!g$to %in% terra::cells(x$dem, NA_real_)[[1]], ]
-  
-  # distance between cells
-  g$run <- terra::distance(
-    terra::xyFromCell(x$dem, as.vector(g$from)),
-    terra::xyFromCell(x$dem, as.vector(g$to)),
-    lonlat = terra::is.lonlat(x$dem),
-    pairwise = TRUE
-  )
-  
-  # difference between cells
-  g$from_elevation <- terra::extract(x$dem, as.vector(g$from))[,1]
-  
-  g$to_elevation <- terra::extract(x$dem, as.vector(g$to))[,1]
-  
-  g$rise <- g$from_elevation - g$to_elevation
-  
-  # slope
-  g$slope <- g$rise/g$run
-  
-  # what is a realistic slope people would try to hike?
-  if (!is.null(max_slope)) {
+  if (.factor > 1){
     
-    g <- g[g$slope <= tan(max_slope * pi / 180), ]
+    x[["dem"]] <- terra::aggregate(
+      x[["dem"]], 
+      fact = .factor,
+      fun = "mean",
+      na.rm = TRUE
+    ) 
     
   }
   
-  g$speed <- campbell(g$slope, ...)
+  attr(x, "agg_fact") <- .factor
   
-  g$cost <- g$run/g$speed
-  
-  g <- g[, c("from", "to", "cost")]
-
-  coords <- cbind(
-    ID = terra::cells(x$dem), 
-    terra::xyFromCell(x$dem, terra::cells(x$dem))
-  ) |> 
-    as.data.frame() |> 
-    rename_with(toupper)
-  
-  # force as.character(1000000) to be "1000000" instead of "1e-6"
-  # this fixes problem with makegraph()
-  options(scipen = 9999)
-  
-  x$graph <- makegraph(
-    as.data.frame(g),
-    directed = TRUE,
-    coords = coords
-  )
-  
-  return(x)
+  x
   
 }
 
-campbell <- function(x, decile = 30L) {
+group_sites_by_cell <- function(x){
   
-  if (length(decile) != 1) {
-    
-    stop("campbell accepts only one decile at a time.")
-    
-  }
+  # get raster cell IDs for site points
+  x[["sites"]] <- x[["sites"]] |> 
+    mutate(cell = cells(x[["dem"]], vect(x[["sites"]]))[,2])
   
-  # campbell function wants degrees, not rise-over-run as in tobler
-  # but, we're working with rr, so remember to convert radians to degrees with 180/pi!
-  slope <- atan(x) * 180 / pi
-  
-  # values provided in Campbell 2019, Supplement, Table S1
-  # for simplicity, I excluded all but the deciles
-  deciles <-
-    data.frame(
-      decile = c(10L, 20L, 30L, 40L, 50L, 60L, 70L, 80L, 90L),
-      a = c(-1.568, -1.71,  -1.858, -1.958, -2.171, -2.459, -2.823,  -3.371,  -3.06),
-      b = c(13.328, 10.154,  8.412,  8.96,  10.064, 11.311, 12.784,  15.395,  16.653),
-      c = c(38.892, 36.905, 39.994, 50.34,  63.66,  79.287, 98.697, 134.409, 138.875),
-      d = c( 0.404,  0.557,  0.645,  0.649,  0.628,  0.599,  0.566,   0.443,   0.823),
-      e = c(-0.003, -0.004, -0.004, -0.005, -0.005, -0.005, -0.005,  -0.005,  -0.0139)
+  # group relevant site attribute data by grid cell
+  x[["cell_table"]] <- x[["sites"]] |> 
+    st_drop_geometry() |> 
+    select(cell, center, n_room) |> 
+    group_by(cell) |> 
+    summarize(
+      center = ifelse(sum(center) > 0, 1, 0),
+      n_room = sum(n_room)
     )
   
-  ind <- which(deciles$decile == as.integer(decile))
+  x
   
-  deciles <- deciles[ind, ]
+}
+
+add_graph <- function(x, max_slope = NULL){
   
-  a <- deciles$a
-  b <- deciles$b
-  c <- deciles$c
-  d <- deciles$d
-  e <- deciles$e
+  # keep track of metadata
+  attr(x, "max_slope") <- max_slope
   
-  # lorentz distribution
-  lorentz <- (1 / ((pi * b) * (1 + ((slope - a) / b)^2)))
+  # cells(<SpatRaster>) returns cell IDs 
+  # for all cells with non-NA values
+  non_NA_cells <- cells(x[["dem"]])
   
-  # modified lorentz
-  (c * lorentz) + d + (e * slope)
+  # cells(<SpatRaster>, <numeric>) returns cell IDs 
+  # for all cells with values matching <numeric>
+  NA_cells <- cells(x[["dem"]], NA_real_)[[1]]
+  
+  # get adjacency matrix 
+  graph <- adjacent(
+    x[["dem"]],
+    cells = non_NA_cells,
+    directions = 8,
+    pairs = TRUE
+  ) |> as.data.frame()
+  
+  # remove rows with to-cells that have NA values
+  graph <- graph |> filter(!to %in% NA_cells)
+    
+  # rise = difference between adjacent cells
+  # run = distance between adjacent cells
+  # slope = rise/run
+  # convert slope 
+  #   to radians with rads = atan(rise/run)
+  #   to degrees with degs = rads * 180/pi 
+  graph <- graph |> 
+    mutate(
+      from_elevation = terra::extract(x[["dem"]], from)[,1],
+      to_elevation = terra::extract(x[["dem"]], to)[,1],
+      rise = from_elevation - to_elevation,
+      run = distance(
+        xyFromCell(x[["dem"]], from),
+        xyFromCell(x[["dem"]], to),
+        lonlat = is.lonlat(x[["dem"]]),
+        pairwise = TRUE
+      ),
+      slope = atan(rise/run) * (180/pi)
+    )
+  
+  # what is a realistic slope people would try to hike?
+  # remove all edges with slopes greater than max_slope
+  if (!is.null(max_slope)) { graph <- graph |> filter(slope <= max_slope) }
+  
+  # now that we have slope, the strategy is this:
+  # 1) calculate the hiking speed on each slope estimate
+  # 2) calculate the length of each slope (the length of the hypotenuse)
+  # 3) divide length by speed to get travel time (this is the edge weight)
+
+  # Campbell's hiking function, see Campbell et al 2019
+  # note: campbell function wants degrees!
+  campbell <- function(x) {
+    
+    # values provided in Supplement Table S3
+    # using the 5th percentile of the Lorentz curve as recommended by Campbell
+    a <- -1.527
+    b <- 14.041
+    c <- 36.813
+    d <- 0.320
+    e <- -0.00273
+    
+    # lorentz distribution
+    lorentz <- (1 / ((pi * b) * (1 + ((x - a) / b)^2)))
+    
+    # modified lorentz
+    (c * lorentz) + d + (e * x)
+    
+  }
+
+  # calculate 
+  #   speed using Campbell's hiking function
+  #   length of hypotenuse
+  #   travel time between adjacent cells
+  graph <- graph |> 
+    mutate(
+      speed = campbell(slope),
+      cost = sqrt(run^2L + rise^2L)/speed
+    )
+
+  # get coordinates table with cell IDs for safe joins
+  coords <- data.frame(ID = non_NA_cells) |> 
+    bind_cols(xyFromCell(x[["dem"]], non_NA_cells)) |> 
+    rename_with(toupper)
+
+  x[["graph"]] <- makegraph(
+    graph |> select(from, to, cost),
+    directed = TRUE,
+    coords = coords
+  )
+
+  x
   
 }
 
 ```
 
 ```{r}
+#| time_it: true
 
-cmv <- cmv |> add_graph(max_slope = 45, decile = 10L)
-nrg <- nrg |> add_graph(max_slope = 45, decile = 10L)
-cib <- cib |> add_graph(max_slope = 45, decile = 10L)
+cmv <- cmv |> 
+  aggregate_grid(.factor = 3) |> 
+  group_sites_by_cell() |> 
+  add_graph(max_slope = 45)
+
+nrg <- nrg |> 
+  aggregate_grid(.factor = 3) |> 
+  group_sites_by_cell() |> 
+  add_graph(max_slope = 45)
+
+cib <- cib |> 
+  aggregate_grid(.factor = 3) |> 
+  group_sites_by_cell() |> 
+  add_graph(max_slope = 45)
 
 ```
 
 ### Add distance matrix
+
+To calculate travel time between every pair of site points, we use a
+bi-directional version of Dijkstra's algorithm as implemented in the R package
+`{cppRouting}`. Note that we also average the from- and to- travel times, so the
+results are isotropic (meaning direction is irrelevant).
 
 ```{r}
 #| code-fold: true
 
 add_distance_matrix <- function(x){
   
-  x$sites$cell <- terra::cells(x$dem, terra::vect(x$sites))[,2]
-
-  # use unique cell IDs as some centers are in the same pixel, 
-  # so calculations would be redundant
+  cell_ids <- x[["cell_table"]][["cell"]]
+  
+  cells_in_graph <- x[["graph"]][["dict"]][["ref"]]
+  
+  missing_cells <- setdiff(cell_ids, cells_in_graph)
+  
+  if (length(missing_cells) > 0){
+    
+    cli::cli_abort(c(
+      "Some grid cells have sites but are not in the graph!",
+      "i" = "Cells: {missing_cells}"
+    ))
+    
+  }
+  
   dm <- get_distance_matrix(
-    x$graph,
-    from = x$sites$cell |> unique(),  
-    to = x$sites$cell |> unique()
+    x[["graph"]],
+    from = cell_ids,  
+    to = cell_ids
   )
   
   # make symmetric by averaging off-diagonals
-  d <- cbind(dm[lower.tri(dm)], t(dm)[lower.tri(dm)])
+  lt <- lower.tri(dm)
+  ut <- upper.tri(dm)
   
-  dm[lower.tri(dm)] <- rowMeans(d, na.rm = TRUE)
-  dm[upper.tri(dm)] <- t(dm)[upper.tri(dm)]
+  dm[lt] <- rowMeans(cbind(dm[lt], t(dm)[lt]), na.rm = TRUE)
+  dm[ut] <- t(dm)[ut]
   
   diag(dm) <- 0
   
-  x$dm <- dm
+  # add to list and return
+  x[["dm"]] <- dm
   
-  return(x)
+  x
   
 }
 
 ```
 
 ```{r}
+#| time_it: true
 
 cmv <- cmv |> add_distance_matrix()
 nrg <- nrg |> add_distance_matrix()
@@ -480,113 +665,133 @@ cib <- cib |> add_distance_matrix()
 ```{r}
 #| code-fold: true
 
-get_commutes <- function(x, n){
-  
-  centers <- get_centers(x) |> select(-center)
-  farms   <- get_farms(x) |> select(-center)
+randomize_commutes <- function(x, n = 1000){
   
   # subset dm (distance matrix) to get dm[farms, centers]
-  i <- which(rownames(x$dm) %in% farms$cell)
-  j <- which(colnames(x$dm) %in% centers$cell)
+  farms <- x[["cell_table"]] |> filter(center == 0)
+  centers <- x[["cell_table"]] |> filter(center == 1)
   
-  dm <- x$dm[i, j]
+  i <- which(rownames(x[["dm"]]) %in% farms[["cell"]])
+  j <- which(colnames(x[["dm"]]) %in% centers[["cell"]])
   
+  dm <- x[["dm"]][i, j]
+  
+  # get observed density
   observed <- apply(dm, 1, min)
-  observed <- density(observed, kernel = "gaussian", n = 512, from = 0, to = 7200)
-  
-  r <- terra::rast(
-    nrows = nrow(x$dem), 
-    ncols = ncol(x$dem), 
-    extent = ext(x$dem), 
-    crs = crs(x$dem)
+  observed <- density(
+    observed,
+    kernel = "gaussian", 
+    n = 512, 
+    from = 0, 
+    to = 7200
   )
   
+  # build raster to randomly sample cells
+  r <- setValues(x[["dem"]], NA)
+  
+  # don't sample past furthest observed distance from nearest center
   dmax <- st_distance(
-    x$sites |> filter(center == 0), 
-    x$sites |> filter(center == 1)
-  ) |> units::drop_units() |> apply(1, min) |> max()
+    x[["sites"]] |> filter(center == 0), 
+    x[["sites"]] |> filter(center == 1)
+  )
   
-  i <- cells(
-    x$dem, 
-    x$sites |> filter(center == 1) |> st_buffer(dmax) |> st_union() |> vect()
-  )[, "cell"]
+  dmax <- units::drop_units(dmax)
+  dmax <- apply(dmax, 1, min)
+  dmax <- max(dmax)
   
-  i <- i[i %in% x$graph$dict$ref]
+  sample_area <- x[["sites"]] |> 
+    filter(center == 1) |> 
+    st_buffer(dist = dmax) |> 
+    st_union() |> 
+    vect()
+  
+  i <- cells(x[["dem"]], sample_area)[, "cell"]
+  
+  # only use those that have nodes in the graph (excludes big slopes)
+  i <- i[i %in% x[["graph"]][["dict"]][["ref"]]]
   
   r[i] <- 1
   
   # don't sample cells with centers in them
-  j <- colnames(dm) |> as.numeric()
+  j <- unique(centers[["cell"]])
   
   r[j] <- NA
   
-  random_points <- terra::spatSample(
+  random_points <- spatSample(
     r, 
     size = n,
     method = "regular",
     cells = TRUE,
     na.rm = TRUE
-  ) |> pull(cell) |> unique()
+  )
+  
+  random_points <- unique(random_points[["cell"]])
   
   dm <- get_distance_matrix(
-    x$graph,
+    x[["graph"]],
     from = random_points,  
     to = colnames(dm)
   )
   
   # make symmetric by averaging off-diagonals
-  d <- cbind(dm[lower.tri(dm)], t(dm)[lower.tri(dm)])
+  lt <- lower.tri(dm)
+  ut <- upper.tri(dm)
   
-  dm[lower.tri(dm)] <- rowMeans(d, na.rm = TRUE)
-  dm[upper.tri(dm)] <- t(dm)[upper.tri(dm)]
+  dm[lt] <- rowMeans(cbind(dm[lt], t(dm)[lt]), na.rm = TRUE)
+  dm[ut] <- t(dm)[ut]
   
   diag(dm) <- 0
   
   expected <- apply(dm, 1, min)
-  expected <- density(expected, kernel = "gaussian", n = 512, from = 0, to = 7200)
+  expected <- density(
+    expected,
+    kernel = "gaussian", 
+    n = 512, 
+    from = 0, 
+    to = 7200
+  )
   
-  tibble(
-    region = x$name,
-    distance = observed$x,
-    observed = observed$y,
-    expected = expected$y
+  tibble::tibble(
+    region = attr(x, "name"),
+    distance = observed[["x"]],
+    observed = observed[["y"]],
+    expected = expected[["y"]]
   )
   
 }
 
 set.seed(1701) # USS Enterprise
 
-commutes <- bind_rows(
-  cmv |> get_commutes(n = 1000),
-  nrg |> get_commutes(n = 1000),
-  cib |> get_commutes(n = 1000)
-)
+commutes <- list(cmv, nrg, cib) |> 
+  map(randomize_commutes) |> 
+  bind_rows()
 
 q <- function(x, p){
   
-  centers <- get_centers(x) |> select(-center)
-  farms   <- get_farms(x) |> select(-center)
-  
   # subset dm (distance matrix) to get dm[farms, centers]
-  i <- which(rownames(x$dm) %in% farms$cell)
-  j <- which(colnames(x$dm) %in% centers$cell)
+  farms <- x[["cell_table"]] |> filter(center == 0)
+  centers <- x[["cell_table"]] |> filter(center == 1)
   
-  dm <- x$dm[i, j]
+  i <- which(rownames(x[["dm"]]) %in% farms[["cell"]])
+  j <- which(colnames(x[["dm"]]) %in% centers[["cell"]])
+  
+  dm <- x[["dm"]][i, j]
   
   observed <- apply(dm, 1, min)
   
-  tibble(
-    region = x$name,
-    distance = quantile(observed, p = p) |> unname()
+  quant <- quantile(observed, p = p)
+  quant <- unname(quant)
+  
+  tibble::tibble(
+    region = attr(x, "name"),
+    distance = quant
   )
   
 }
 
-q95 <- bind_rows(
-  q(cmv, 0.95),
-  q(nrg, 0.95),
-  q(cib, 0.95)
-) |> 
+q95 <- list(cmv, nrg, cib) |> 
+  map(\(x){ q(x, 0.95) }) |> 
+  bind_rows() |> 
   mutate(
     y = c(2.4, 1.8, 1.2),
     label = case_when(
@@ -620,31 +825,34 @@ gg <- ggplot() +
     vjust = 0.5,
     hjust = 0,
     nudge_x = 2,
-    size = 12/.pt
+    size = 11.5/.pt
   ) +
   scale_color_manual(name = NULL, values = region_colors) +
   annotate(
     "point",
-    x = min(q95$distance)/60,
+    x = min(q95[["distance"]])/60,
     y = 3.0,
     color = "gray25",
     size = 2
   ) +
   annotate(
     "text",
-    label = "95% Quantile of Observed",
-    x = min(q95$distance)/60 + 2,
+    label = "Observed 95% Quantile",
+    x = min(q95[["distance"]])/60 + 2,
     y = 3.0,
     color = "gray25",
     vjust = 0.5,
     hjust = 0,
-    size = 12/.pt
+    size = 11.5/.pt
   ) +
   labs(
     x = "Commute to Nearest Center [mins]",
     y = "Density\nlog(Observed) - log(Random)"
   ) +
-  scale_x_continuous(breaks = seq(0, 120, by = 30), expand = expansion(0.03)) +
+  scale_x_continuous(
+    breaks = seq(0, 120, by = 30), 
+    expand = expansion(0.03)
+  ) +
   coord_cartesian(xlim = c(0, 120)) +
   theme(
     legend.position = "none",
@@ -656,157 +864,184 @@ fn <- here("figures", "commute-kl.png")
 ggsave(
   plot = gg,
   filename = fn,
-  width = 5,
+  width = 5.1,
   height = 3.3,
   dpi = 600
 )
 
 prepare_image(fn)
 
-remove(get_commutes, q, q95, gg)
+remove(randomize_commutes, commutes, q, q95, gg)
 
 ```
 
 ::: {#fig-commutes}
-![](../figures/commute-kl.png){width="60%" fig-alt="Difference between log probability density of obversed commute times from farms to nearest centers and log probability density of commute times from random locations to nearest centers."}
+![](../figures/commute-kl.png){width="60%"
+fig-alt="Difference between log probability density of obversed commute times from farms to nearest centers and log probability density of commute times from random locations to nearest centers."}
 
-Difference between log probability density of obversed commute times from farms to nearest centers and log probability density of commute times from random locations to nearest centers.
+Difference between log probability density of observed commute times from farms
+to nearest centers and log probability density of commute times from random
+locations to nearest centers.
 :::
 
 ## Communities
 
 Our community detection algorithm proceeds as follows:
 
-1. Identify community centers   
-2. Identify farms within commute distance 
-3. Join communities to their overlapping neighbors 
-4. Exclude farms closer to another community center (tie-breaking step) 
-5. Draw smallest concave hull encompassing all farms, centers, and paths 
+1.  Identify community centers
+2.  Remove distant farms
+3.  Join centers to their overlapping neighbors
+4.  Join farms to their nearest center
+5.  Draw smallest concave hull encompassing all farms, centers, and paths
 
-Step 1 is already done and stored in the data.  
+Step 1 is already done and stored in the data. Step 2 can technically be done
+after 2 and 3, but it makes sense to do it first, since it means those sites can
+be ignored afterwards.
 
-### Filter by commute distance
+### Filter out distant farms
 
 ```{r}
 #| code-fold: true
 
-subset_distance_matrix <- function(x){
-  
-  centers <- get_centers(x) |> select(-center)
-  farms   <- get_farms(x) |> select(-center)
+remove_distant_farms <- function(x, dmax){
   
   # subset dm (distance matrix) to get dm[farms, centers]
-  i <- which(rownames(x$dm) %in% farms$cell)
-  j <- which(colnames(x$dm) %in% centers$cell)
+  farms <- x[["cell_table"]] |> filter(center == 0)
+  centers <- x[["cell_table"]] |> filter(center == 1)
   
-  x$dm[i, j]
+  i <- which(rownames(x[["dm"]]) %in% farms[["cell"]])
+  j <- which(colnames(x[["dm"]]) %in% centers[["cell"]])
   
-}
-
-filter_distance_matrix <- function(x, d){
+  dm <- x[["dm"]][i, j]
   
-  nearest_farms <- apply(x, 1, \(x){ which(x <= d) })
-  nearest_farms <- lapply(nearest_farms, \(x){ as.numeric(names(x)) })
+  # if the distance from a farm to its nearest center
+  # is greater than dmax, we remove it from the cell table
+  min_distance <- apply(dm, 1, min)
   
-  arrow_table(
-    center = unlist(nearest_farms),
-    farm = rep(names(nearest_farms), lengths(nearest_farms)) |> as.numeric()
-  ) |> arrange(center, farm)
+  dm <- dm[min_distance <= dmax, ]
   
-}
-
-find_nearby_farms <- function(x, dmax){
+  x[["cell_table"]] <- x[["cell_table"]] |> 
+    filter(cell %in% c(rownames(dm), colnames(dm)))
   
-  x$dmax <- dmax
+  # collect metadata
+  attr(x, "dmax") <- dmax
+  attr(x, "n_outliers") <- nrow(farms) - nrow(dm)
   
-  x$nearest_farms <- x |> 
-    subset_distance_matrix() |> 
-    filter_distance_matrix(dmax)
-  
-  sites <- x$sites |> 
-    st_drop_geometry() |> 
-    select(cell, n_room) |> 
-    group_by(cell) |> 
-    summarize(n_room = sum(n_room))
-  
-  x$nearest_farms <- x$nearest_farms |> left_join(sites, by = join_by(farm == cell))
-  
-  return(x)
+  x
   
 }
 
 ```
 
 ```{r}
+#| time_it: true
 
 # how many seconds in ... ?
 one_hour <- 3600
 
-cmv <- cmv |> find_nearby_farms(dmax = one_hour)
-nrg <- nrg |> find_nearby_farms(dmax = one_hour)
-cib <- cib |> find_nearby_farms(dmax = one_hour)
+cmv <- cmv |> remove_distant_farms(dmax = one_hour)
+nrg <- nrg |> remove_distant_farms(dmax = one_hour)
+cib <- cib |> remove_distant_farms(dmax = one_hour)
 
 ```
 
-### Find neighboring centers
+### Join neighboring centers
 
-> For any two centers $C_1$ and $C_2$ with nearby farm room counts $N_1 < N_2$, if $pN_1$ of $C_1$’s rooms are within a distance $d$ of $C_1$ and $C_2$, then $C_1$ is part of the same community as $C_2$.
+> For any two centers $C_1$ and $C_2$ with catchment room counts $N_1 < N_2$, if
+> $pN_1$ of $C_1$'s rooms are within a distance $D$ of $C_2$, then $C_1$ is part
+> of the same community as $C_2$.
+
+Here the population, $N$, of focal center $c$ is defined as
+
+$$N_{c} = R_{c} + \sum_{k=1}^{S} R_{k} \cdot I(t_{kc} \leq D_{c})$$
+
+for all sites $S$ (this includes both farms and centers), with $R_{c}$ being the
+room count at $c$ and $R_{k}$ the room count at site $k$, $t_{kc}$ the travel
+time from $k$ to $c$, $D_{c}$ the threshold travel time to $c$ (referred to as
+*D-join* in the paper), and $I$ the indicator function that is 1 if $t \leq D$
+and 0 otherwise.
 
 ```{r}
 #| code-fold: true
 
 join_neighboring_centers <- function(x, p, djoin){
   
-  x$djoin <- djoin
+  # subset dm (distance matrix) to get dm[farms and centers, centers]
+  center_cells <- x[["cell_table"]] |> filter(center == 1) |> pull(cell)
   
-  nearest_farms <- x |> 
-    subset_distance_matrix() |> 
-    filter_distance_matrix(djoin)
+  j <- which(colnames(x[["dm"]]) %in% center_cells)
   
-  sites <- x$sites |> 
-    st_drop_geometry() |> 
-    select(cell, n_room) |> 
-    group_by(cell) |> 
-    summarize(n_room = sum(n_room))
+  dm <- x[["dm"]][, j]
+    
+  # find farms and centers that are within distance djoin of other centers
+  djoins <- apply(dm, 1, \(.x){ which(.x <= djoin) })
   
-  nearest_farms <- nearest_farms |> left_join(sites, by = join_by(farm == cell))
+  # remove farms that are isolated (ie, greater than djoin from a center)
+  # note: this should just be farms because all centers are less than
+  #   djoin from themselves
+  djoins <- djoins[lengths(djoins) > 0]
+
+  # collect list into a long-form table
+  djoins <- tibble(
+    center = colnames(dm)[unlist(djoins)],
+    farm_or_center = rep(names(djoins), lengths(djoins))
+  ) |> mutate(across(everything(), as.numeric))
   
-  remove(sites)
+  # now we combine the room counts with the djoins table
+  djoins <- djoins |> 
+    left_join(
+      x[["cell_table"]] |> select(-center), 
+      by = join_by(farm_or_center == cell)
+    ) |> 
+    rename("population" = n_room)
   
-  room_counts <- nearest_farms |> 
+  # calculate the total population of the catchment around each center
+  # note that this involves a lot of double-counting, farms and centers
+  # counting towards the population size of multiple centers, but this is OK
+  # as we are interested in using the shared population as a measure of 
+  # interaction between centers, not as an estimate of a community's population
+  gen_pop <- djoins |> 
     group_by(center) |> 
-    summarize(n_room = sum(n_room)) |> 
-    collect()
+    summarize(population = sum(population))
   
-  R <- outer(room_counts$n_room, room_counts$n_room, FUN = '<=')
+  # for each center, what other centers have larger catchment populations?
+  # using outer() is extremely fast
+  # in this case, it creates an asymmetric logical matrix
+  R <- outer(gen_pop[["population"]], gen_pop[["population"]], FUN = '<=')
   diag(R) <- FALSE
   
-  colnames(R) <- room_counts$center
-  rownames(R) <- room_counts$center
+  colnames(R) <- gen_pop[["center"]]
+  rownames(R) <- gen_pop[["center"]]
   
+  # now, we turn that matrix into a big list 
+  # each element is a vector with the cell IDs of the larger centers
   R <- apply(R, 1, which)
-  R <- lapply(R, \(x){ as.numeric(names(x)) })
+  R <- map(R, \(x){ as.numeric(names(x)) })
   
-  neighbors_matrix <- imap(R, \(x, idx){
+  # for each center, we look at all the centers with bigger catchment
+  # populations than it, and ask: is the shared population size some fraction
+  # of the total population of the catchment?
+  neighbors_matrix <- purrr::imap(R, \(x, idx){
     
-    N <- room_counts |> filter(center == as.numeric(idx)) |> pull(n_room)
-    
-    focal_farms <- nearest_farms |> 
+    N <- gen_pop |> 
       filter(center == as.numeric(idx)) |> 
-      collect() |> 
-      pull(farm)
+      pull(population)
+    
+    focal_neighbors <- djoins |> 
+      filter(center == as.numeric(idx)) |> 
+      pull(farm_or_center)
 
-    cntrs <- nearest_farms |> 
+    cntrs <- djoins |> 
       filter( # this filter gives the intersection of farms/cells 
         center %in% x,
-        farm %in% focal_farms
+        farm_or_center %in% c(idx, focal_neighbors)
       ) |> 
       group_by(center) |> 
-      summarize(proportion = sum(n_room)/N) |> 
+      summarize(proportion = sum(population)/N) |> 
       filter(proportion >= p) |> 
-      collect() |> 
       pull(center)
     
+    # return a logical vector the length of R
     names(R) %in% cntrs
     
   })
@@ -817,22 +1052,32 @@ join_neighboring_centers <- function(x, p, djoin){
   colnames(neighbors_matrix) <- names(R)
   rownames(neighbors_matrix) <- names(R)
   
-  # igraph...
+  # there's a recursive dimension to this:
+  # if a center is joined with a center that's joined with a center, etc.
+  # i don't know how to do that in R
+  # so, igraph it is...
   g <- igraph::graph.adjacency(neighbors_matrix)
-  membership <- igraph::components(g)$membership
+  membership <- igraph::components(g)[["membership"]]
   
-  x$lookup <- tibble(
+  # this gives us the community that every center is part of
+  x[["center_communities"]] <- tibble(
     center = names(membership) |> as.numeric(),
     community = unname(membership)
   )
   
-  return(x)
+  # collect metadata
+  attr(x, "djoin") <- djoin
+  attr(x, "n_communities") <- length(unique(unname(membership)))
+  attr(x, "proportion") <- p
+  
+  x
   
 }
 
 ```
 
 ```{r}
+#| time_it: true
 
 # how many seconds in ... ?
 half_hour <- 1800
@@ -843,196 +1088,256 @@ cib <- cib |> join_neighboring_centers(p = 0.8, djoin = half_hour)
 
 ```
 
-### Find nearest center
+### Collect members
 
-```{r}
-#| code-fold: true
-
-find_nearest_center <- function(x){
-
-  farms_to_centers <- subset_distance_matrix(x)
-    
-  # find the nearest center for each farm
-  nearest_center <- apply(farms_to_centers, 1, \(x) which.min(x))
-  nearest_center <- colnames(farms_to_centers)[nearest_center]
-  
-  distance <- apply(farms_to_centers, 1, min)
-  
-  x$nearest_center <- tibble(
-    farm = farms_to_centers |> rownames() |> as.numeric(),
-    center = nearest_center |> as.numeric(),
-    distance = unname(distance)
-  ) |> filter(distance <= x$dmax)
-
-  return(x)
-  
-}
-
-```
-
-```{r}
-
-cmv <- cmv |> find_nearest_center() 
-nrg <- nrg |> find_nearest_center() 
-cib <- cib |> find_nearest_center() 
-
-```
-
-### Define boundaries
-
-Now that we have each farm associated with its nearest community center, and each center joined with its neighbors, assuming it has any, we can define a boundary for the community using a concave hull. We choose a concave rather than convex hull because the latter tends to artificially inflate the size of the community, often to a significant degree. On the other hand, the concave hull can generate extremely unrealistic shapes for communities. To avoid these issues, we first compute the least-cost path between each farm in the community and every other farm in the community. We then add the vertices that define these paths as virtual points to the community. We then generate the concave hull for the expanded set of community points. The consequence is that an individual setting off from one farm in the community to another should never have to leave the community. Their walk will always be within the community boundary.  
-
-The result is still not perfect, however, so we further simplify polygons (including filling holes) by adding then removing a small buffer. Two things to note here: (1) we project the boundaries first as Google's `S2` system for geocomputations on the sphere (the default now in `{sf}`) is janky with how it does buffering and (2) we add a small buffer to smooth some of the noise in the hull.
+Here we just associate each farm with its nearest community center. So, we have
+full community membership defined. Then we drop communities that have three or
+less sites associated with them. This is only done because our main goal with
+this analysis is to estimate the extent of farm land associated with these
+dispersed farming communities.
 
 ```{r}
 #| code-fold: true
 
 collect_members <- function(x){
   
-  lookup <- x$lookup
+  # subset dm (distance matrix) to get dm[farms, centers]
+  farms <- x[["cell_table"]] |> filter(center == 0)
+  centers <- x[["cell_table"]] |> filter(center == 1)
   
-  centers <- get_centers(x) |> 
-    left_join(lookup, by = join_by(cell == center)) |> 
-    select(site_id, n_room, initial_phase, final_phase, community) |> 
-    filter(!is.na(community)) |> 
-    mutate(type = "center")
+  i <- which(rownames(x[["dm"]]) %in% farms[["cell"]])
+  j <- which(colnames(x[["dm"]]) %in% centers[["cell"]])
   
-  farms <- get_farms(x) |> 
-    select(-center) |> 
-    left_join(x$nearest_center, by = join_by(cell == farm)) |> 
-    left_join(lookup, by = "center") |> 
-    select(site_id, n_room, initial_phase, final_phase, community) |> 
-    filter(!is.na(community)) |> 
-    mutate(type = "farm")
+  dm <- x[["dm"]][i, j]
   
-  x$members <- bind_rows(farms, centers) |> 
-    arrange(community, site_id) |> 
-    left_join(x$sites[, "site_id"], by = "site_id") |> 
-    mutate(region = x$name, .before = everything()) |> 
-    st_sf()
+  # get nearest center to each farm
+  k <- apply(dm, 1, which.min)
+  nearest_centers <- tibble(
+    farm = as.numeric(names(k)),
+    nearest_center = as.numeric(colnames(dm)[k])
+  )
+  
+  # collect the farms and the centers they are closest to, 
+  # and by extension the communities they are part of
+  farms <- x[["cell_table"]] |> 
+    filter(center == 0) |> 
+    left_join(
+      nearest_centers, 
+      by = join_by(cell == farm)
+    ) |> 
+    left_join(
+      x[["center_communities"]], 
+      by = join_by(nearest_center == center)
+    ) |> 
+    select(-nearest_center)
+  
+  # collect the centers and their community affiliations
+  centers <- x[["cell_table"]] |> 
+    filter(center == 1) |> 
+    left_join(
+      x[["center_communities"]], 
+      by = join_by(cell == center)
+    )
+  
+  # combine and save
+  x[["cell_table"]] <- bind_rows(farms, centers)
       
-  return(x)
+  x
   
 }
 
+drop_small_communities <- function(x, threshold){
+  
+  final_list <- x[["cell_table"]] |> 
+    filter(center == 0) |> 
+    group_by(community) |> 
+    summarize(n = n()) |> 
+    filter(n > threshold) |> 
+    pull(community) |> 
+    unique()
+  
+  x[["cell_table"]] <- x[["cell_table"]] |> filter(community %in% final_list)
+  
+  # update metadata
+  attr(x, "min_size") <- threshold
+  attr(x, "n_dropped") <- attr(x, "n_communities") - length(final_list)
+  
+  x
+  
+}
+
+```
+
+```{r}
+#| time_it: true
+
+cmv <- cmv |> 
+  collect_members() |> 
+  drop_small_communities(threshold = 3)
+
+nrg <- nrg |> 
+  collect_members() |> 
+  drop_small_communities(threshold = 3)
+
+cib <- cib |> 
+  collect_members() |> 
+  drop_small_communities(threshold = 3)
+
+```
+
+### Define boundaries
+
+Now that we have community centers joined to their overlapping neighbors, and
+farms joined to their nearest centers, we can define boundaries for the
+resulting communities using a concave hull. We choose a concave rather than
+convex hull because the latter tends to artificially inflate the size of the
+community, often to a significant degree. On the other hand, the concave hull
+can generate extremely unrealistic shapes for communities, even when moving the
+concavity ratio closer to the convex hull.
+
+Our somewhat brute force strategy for navigating between the Scylla and
+Charybdis of being too big or too strange is to first compute the least-cost
+path between every site on the concave hull of the community's site points. In
+this case the concave hull gives us all the points on the convex hull along with
+some on the interior of the convex hull. The points that are excluded should
+have shortest paths to the outer points that at some point intersect with the
+shortest paths that are actually calculated, so we get a reasonable
+approximation and save some time doing it. We then add the vertices that define
+the computed paths as virtual points to the community and generate the concave
+hull for the expanded set of community points. The consequence is that an
+individual setting off from one farm in the community to any other site in the
+community (farm or center) should never have to leave the community. This, in
+effect, makes the community polygons concave with respect to time.
+
+The result can still be a little noisy, so we simplify polygons - including, in
+some case, filling holes - by dilating them, that is, adding then removing a
+small buffer.
+
+Note that we also do some graph pruning in each iteration, basically cropping
+the graph to an expanded area around the points assigned to a specific
+community. This prevents the search algorithm from searching out away from the
+other sites in the community.
+
+```{r}
+#| code-fold: true
+
 define_boundaries <- function(x, concavity_ratio, dilate){
   
-  community_ids <- x$members |> pull(community) |> unique()
+  members <- x[["cell_table"]]
+  
+  sites <- x[["sites"]] |> 
+    select(cell) |> 
+    st_transform(attr(x, "grid_crs"))
+  
+  community_ids <- unique(members[["community"]])
   
   communities <- vector("list", length(community_ids))
   
-  # cli::cli_progress_bar(
-  #   "Define boundaries", 
-  #   total = length(community_ids)
-  # )
-  
   for (i in community_ids){
     
-    m <- x$members |> filter(community == i)
+    m <- members |> filter(community == i)
     
-    cells <- terra::cells(x$dem, vect(m))[, 2] |> unique()
+    # get cells along the edge of point clusters using concave hull
+    # so we get points that are on the convex hull and in
+    # the interior of the cluster, too
+    pts <- xyFromCell(x[["dem"]], m[["cell"]]) |> 
+      st_multipoint() |> 
+      st_sfc(crs = attr(x, "grid_crs")) |> 
+      st_sf(geometry = _)
     
-    paths <- get_multi_paths(
-      x$graph, 
-      from = cells, 
-      to = cells
-    )
+    cells <- pts |> 
+      st_cast("POINT") |> 
+      mutate(cell = m[["cell"]]) |> 
+      st_filter(st_concave_hull(pts, 0.2), .predicate = st_touches) |> 
+      pull(cell)
     
+    # prune the graph so search doesn't go too far away from the convex hull,
+    # meaning away from all the other points in the community
+    # we use a somewhat arbitrary 1.5 km distance for this, so we can reasonably 
+    # assume we are not chopping off the shortest path, while at the same time
+    # cutting down the total number of paths to search by a considerable amount
+    bb8 <- st_convex_hull(pts) |> 
+      st_buffer(1500) |> 
+      st_bbox() |> 
+      st_as_sfc(crs = st_crs(pts))
+    
+    cells_in_bb8 <- cells(x[["dem"]], vect(bb8))[,2]
+    
+    graph <- x[["graph"]]
+    
+    node_ids <- graph[["dict"]] |> 
+      filter(ref %in% cells_in_bb8) |> 
+      pull(id)
+    
+    graph[["data"]] <- graph[["data"]] |> 
+      filter(from %in% node_ids, to %in% node_ids)
+    
+    # get all short paths 
+    # this returns a list with length equal to the length of cells
+    # each element of the list is a vector of the grid cells that the short
+    # path passes through
+    paths <- get_multi_paths(graph, from = cells, to = cells)
+    
+    # unraveling this list gives us a vector of all the cells on shortest paths
     paths <- paths |> unlist(recursive = TRUE) |> as.numeric() |> unique()
     
+    site_xy <- sites |> 
+      filter(cell %in% m[["cell"]]) |> 
+      st_coordinates()
+    
+    names(site_xy) <- tolower(names(site_xy))
+    
     xy <- rbind(
-      terra::xyFromCell(x$dem, paths),
-      st_coordinates(m)[, 1:2]
+      xyFromCell(x[["dem"]], paths),
+      site_xy
     )
     
-    xy <- xy |> st_multipoint() |> st_sfc(crs = st_crs(m)) |> st_cast("POINT")
-    
-    m <- st_geometry(m)
-    
-    border <- st_sf(geometry = c(xy, m)) |> 
-      summarize() |> 
+    border <- xy |> 
+      st_multipoint() |> 
+      st_sfc(crs = attr(x, "grid_crs")) |> 
+      st_sf(geometry = _) |> 
       st_concave_hull(ratio = concavity_ratio) |> 
       mutate(community = i)
     
     communities[[i]] <- border
     
-    remove(i, m, cells, paths, xy, border)
-    
-    # cli::cli_progress_update()
-    
   }
 
-  x$communities <- communities |> 
+  x[["communities"]] <- communities |> 
     bind_rows() |> 
-    st_transform(x$preferred_projection) |> 
+    st_transform(attr(x, "preferred_projection")) |> 
     st_buffer(dilate[1]) |> 
     st_buffer(dilate[2]) |> 
-    st_transform(4326) |> 
-    mutate(region = x$name, .before = "community")
+    st_transform(4326)
+
+  # update metadata
+  attr(x, "concavity") <- concavity_ratio
+  attr(x, "dilate") <- dilate
   
-  return(x)
-  
-}
-
-```
-
-```{r}
-
-cmv <- cmv |> 
-  collect_members() |> 
-  define_boundaries(concavity_ratio = 0.1, dilate = c(130, -100))
-
-nrg <- nrg |> 
-  collect_members() |> 
-  define_boundaries(concavity_ratio = 0.1, dilate = c(130, -100))
-
-cib <- cib |> 
-  collect_members() |> 
-  define_boundaries(concavity_ratio = 0.1, dilate = c(130, -100))
-
-```
-
-### Drop small communities
-
-```{r}
-#| code-fold: true
-
-drop_small_communities <- function(x, threshold){
-  
-  final_list <- x$members |> 
-    st_drop_geometry() |> 
-    filter(type == "farm") |> 
-    group_by(community) |> 
-    summarize(n = n()) |> 
-    filter(n > threshold) |> 
-    pull(community)
-  
-  x$communities <- x$communities |> filter(community %in% final_list)
-  
-  x$members <- x$members |> st_filter(x$communities)
-  
-  return(x)
+  x
   
 }
 
 ```
 
 ```{r}
+#| time_it: true
 
-cmv <- cmv |> drop_small_communities(threshold = 3)
-nrg <- nrg |> drop_small_communities(threshold = 3)
-cib <- cib |> drop_small_communities(threshold = 3)
+cmv <- cmv |> define_boundaries(concavity_ratio = 0.1, dilate = c(130, -100))
+nrg <- nrg |> define_boundaries(concavity_ratio = 0.1, dilate = c(130, -100))
+cib <- cib |> define_boundaries(concavity_ratio = 0.1, dilate = c(130, -100))
 
 ```
 
 ## Results
 
-Here we show the community polygons themselves as well as the log-density of rooms in each.
+Here we show the community polygons themselves as well as the log-density of
+rooms in each.
 
 ```{r}
 #| code-fold: true
 
-visualize_communities <- function(x, lbl = region_labels){
+visualize_communities <- function(x){
   
   hell <- function(x, n = 1000){
     
@@ -1050,14 +1355,13 @@ visualize_communities <- function(x, lbl = region_labels){
     
   }
   
-  h <- hell(x$dem)
+  h <- hell(x[["dem"]])
   
-  members <- x$members |> 
-    st_drop_geometry() |> 
+  members <- x[["cell_table"]] |> 
     group_by(community) |> 
     summarize(n_room = sum(n_room))
   
-  communities <- x$communities |> 
+  communities <- x[["communities"]] |> 
     left_join(members, by = "community") |> 
     mutate(
       area = st_area(geometry) |> units::set_units(km2) |> units::drop_units(),
@@ -1067,13 +1371,13 @@ visualize_communities <- function(x, lbl = region_labels){
     )
   
   ggplot() +
-    ggtitle(lbl(x$name)[[1]]) +
+    ggtitle(region_labels[attr(x, "name")]) +
     geom_spatraster(
-      data = h$shade, 
-      fill = h$grays,
+      data = h[["shade"]], 
+      fill = h[["grays"]],
       maxcell = Inf
     ) +
-    geom_spatraster(data = x$dem, alpha = 0.5,) +
+    geom_spatraster(data = x[["dem"]], alpha = 0.5) +
     scale_fill_distiller(palette = "Greys", guide = "none") +
     ggnewscale::new_scale_fill() +
     geom_sf(
@@ -1150,9 +1454,11 @@ remove(visualize_communities, zg, bob, fn)
 ```
 
 ::: {#fig-communities}
-![](../figures/communities-all.png){width="100%" fig-alt="Map shows defined community boundaries with fill colors representing the log density of rooms in each."}
+![](../figures/communities-all.png){width="100%"
+fig-alt="Map shows defined community boundaries with fill colors representing the log density of rooms in each."}
 
-Map shows defined community boundaries with fill colors representing the log density of rooms in each.
+Map shows community boundaries with fill colors representing the log density of
+rooms in each.
 :::
 
 ### Community Distributions
@@ -1163,63 +1469,65 @@ Map shows defined community boundaries with fill colors representing the log den
 get_community_data <- function(x){
   
   # AREA
-  A <- x$communities |> 
+  A <- x[["communities"]] |> 
     st_area() |> 
     units::set_units(km2) |> 
     units::drop_units()
   
   tbl_area <- tibble(
-    region = x$name, 
-    community = x$communities$community,
+    community = x[["communities"]][["community"]],
     area = A
   )
   
   # ROOMS
-  tbl_rooms <- x$sites |> 
-    st_join(x$communities[, "community"]) |> 
-    select(region, community, n_room) |> 
-    st_drop_geometry() |> 
+  tbl_rooms <- x[["cell_table"]] |> 
     group_by(community) |> 
-    summarize(
-      region = unique(region),
-      n_room = sum(n_room)
-    ) |> 
-    relocate(region)
+    summarize(n_room = sum(n_room))
   
   # FARMS
-  tbl_sites <- x$members |> 
-    st_drop_geometry() |> 
-    filter(type == "farm") |> 
+  tbl_sites <- x[["cell_table"]] |> 
+    filter(center == 0) |> 
     group_by(community) |> 
-    summarize(n_farm = n(), region = unique(region))
+    summarize(n_farm = n())
   
   # CENTERS
-  tbl_centers <- x$members |> 
-    st_drop_geometry() |> 
-    filter(type == "center") |> 
+  tbl_centers <- x[["cell_table"]] |> 
+    filter(center == 1) |> 
     group_by(community) |> 
-    summarize(n_center = n(), region = unique(region))
+    summarize(n_center = n())
   
   # COMMUTES
-  cell_lookup <- x$sites |> 
-    st_drop_geometry() |> 
-    select(site_id, cell)
+  # subset dm (distance matrix) to get dm[farms, centers]
+  farms <- x[["cell_table"]] |> filter(center == 0)
+  centers <- x[["cell_table"]] |> filter(center == 1)
   
-  tbl_commutes <- x$members |> 
-    st_drop_geometry() |> 
-    filter(type == "center") |> 
-    left_join(cell_lookup, by = "site_id") |> 
-    left_join(x$nearest_center, by = join_by(cell == center), relationship = "many-to-many") |> 
+  i <- which(rownames(x[["dm"]]) %in% farms[["cell"]])
+  j <- which(colnames(x[["dm"]]) %in% centers[["cell"]])
+  
+  dm <- x[["dm"]][i, j]
+  
+  min_dist <- tibble(
+    farm = as.numeric(rownames(dm)),
+    distance = apply(dm, 1, min)
+  )
+  
+  tbl_commutes <- x[["cell_table"]] |> 
+    filter(center == 0) |> 
+    left_join(min_dist, by = join_by(cell == farm)) |> 
     group_by(community) |> 
-    summarize(commute = mean(distance, na.rm = TRUE), region = unique(region))
+    summarize(commute = mean(distance, na.rm = TRUE))
 
   # GATHER EVERYTHING INTO ONE TABLE
   tbl_area |> 
-    left_join(tbl_rooms, by = c("region", "community")) |> 
-    left_join(tbl_sites, by = c("region", "community")) |>
-    left_join(tbl_centers, by = c("region", "community")) |> 
-    left_join(tbl_commutes, by = c("region", "community")) |> 
-    mutate(room_density = n_room/area)
+    left_join(tbl_rooms, by = "community") |> 
+    left_join(tbl_sites, by = "community") |>
+    left_join(tbl_centers, by = "community") |> 
+    left_join(tbl_commutes, by = "community") |> 
+    mutate(
+      region = attr(x, "name"),
+      room_density = n_room/area
+    ) |> 
+    relocate(region)
   
 }
 
@@ -1227,7 +1535,9 @@ get_community_data <- function(x){
 
 ```{r}
 
-results <- list(cmv, nrg, cib) |> map(get_community_data) |> bind_rows()
+results <- list(cmv, nrg, cib) |> 
+  map(get_community_data) |> 
+  bind_rows()
 
 ```
 
@@ -1281,47 +1591,6 @@ results |>
 ```
 
 ```{r}
-#| eval: false
-#| echo: false
-
-# this code is just for exploring communities
-# and associating important (re: named) centers with them
-plot_labels <- function(x){
-  
-  ggplot(x$communities) +
-    geom_sf() +
-    geom_sf_label(aes(label = community)) +
-    theme_void()
-  
-}
-
-get_members <- function(x){
-  
-  x$members |> 
-    st_drop_geometry() |> 
-    mutate(region = x$name, .before = everything())
-  
-}
-
-get_sites <- function(x){ x$sites |> st_drop_geometry() }
-
-results |> 
-  group_by(region) |> 
-  slice_max(room_density, n = 5) |> 
-  left_join(
-    map(list(cmv, nrg, cib), get_members) |> bind_rows(), 
-    by = c("region", "community")
-  ) |> 
-  left_join(
-    map(list(cmv, nrg, cib), get_sites) |> bind_rows() |> filter(center == 1), 
-    by = c("region", "site_id")
-  ) |> 
-  select(region, community, site_id, site_name, area) |> 
-  filter(region == "cib") |> View()
-
-```
-
-```{r}
 #| code-fold: true
 
 lbls <- results |> 
@@ -1338,21 +1607,15 @@ lbls <- results |>
     )
   )
 
-lblr <- as_labeller(c(
-  "commute" = "Mean Commute to Nearest Center [mins]",
-  "room_density" = "Room Density [N/km2]",
-  "farm_area" = "Mean Area for Farms [km2/N]",
-  "center_area" = "Mean Area for Centers [km2/N]",
-  "farm_ratio" = "Ratio of Farms [N] to Centers [N]",
-  "area" = "Total Area [km2]"
-))
+q95 <- quantile(results[["room_density"]], 0.95)
 
 gg <- results |> 
   mutate(
     farm_area = area/n_farm,
     center_area = area/n_center,
     commute = commute/60,
-    farm_ratio = n_farm/n_center
+    farm_ratio = n_farm/n_center,
+    room_density = ifelse(room_density > q95, NA, room_density)
   ) |> 
   select(-n_room, -n_farm, -n_center) |> 
   pivot_longer(c(-region, -community), names_to = "variable") |> 
@@ -1381,7 +1644,7 @@ gg <- results |>
     nrow = 3,
     scale = "free_x",
     strip.position = "bottom",
-    labeller = lblr
+    labeller = pretty_labels
   ) +
   theme(
     axis.text.y = element_blank(),
@@ -1409,30 +1672,286 @@ remove(lbls, lblr, gg, fn)
 ```
 
 ::: {#fig-distributions}
-![](../figures/results-boxplot.png){width="75%" fig-alt="Distributions of important variables across communities and regions."}
+![](../figures/results-boxplot.png){width="75%"
+fig-alt="Distributions of important variables across communities and regions."}
 
-Distributions of important variables across communities and regions.
+Distributions of important variables across communities and regions. Some of the
+extreme room density estimates were dropped to make the main distribution more
+visible.
 :::
 
 ### Save results
 
 ```{r}
 
+gpkg <- here("data", "community-centers.gpkg")
+
 bind_rows(
-  cmv$members |> mutate(region = "cmv", .before = site_id),
-  nrg$members |> mutate(region = "nrg", .before = site_id),
-  cib$members |> mutate(region = "cib", .before = site_id)
+  cmv[["sites"]] |> st_join(cmv[["communities"]]),
+  nrg[["sites"]] |> st_join(nrg[["communities"]]),
+  cib[["sites"]] |> st_join(cib[["communities"]])
 ) |> 
   st_drop_geometry() |> 
   write_sf(gpkg, layer = "members")
 
 bind_rows(
-  cmv$communities, 
-  nrg$communities, 
-  cib$communities
+  cmv[["communities"]] |> mutate(region = "cmv"), 
+  nrg[["communities"]] |> mutate(region = "nrg"), 
+  cib[["communities"]] |> mutate(region = "cib")
 ) |> 
   left_join(results, by = c("region", "community")) |> 
   write_sf(gpkg, layer = "communities")
+
+```
+
+## Sensitivity Analysis
+
+This is expensive computing, but it's worth checking. Note that we don't do
+every combination of parameters, but we do get decent variety relative to the
+default values chosen above. Most of the simulations take about 4 minutes to run
+on my machine. The exceptions are those involving high resolution graphs
+(constructed from DEMs with a low aggregation factor). Those take considerably
+longer, as much as an hour, even with all the shortcuts I added. There are 19
+total simulations. All together, they take about 2.2 hours to run.
+
+For reference, here are the specs on my machine:
+
+-   CPU: AMD Ryzen 7 5800U with Radeon Graphics
+    -   Base speed: 1.90 GHz
+    -   Cores: 8
+    -   Logical processors: 16
+-   RAM: 16.0 GB (15.4 GB usable)
+-   System type: 64-bit operating system, x64-based processor
+-   OS: Windows 11 Home
+
+```{r}
+#| code-fold: true
+
+run_simulation <- function(.x, .args){
+  
+  .x |> 
+    build_region() |> 
+    aggregate_grid(.factor = .args[["agg_factor"]]) |> 
+    group_sites_by_cell() |> 
+    add_graph(max_slope = 45) |> 
+    add_distance_matrix() |> 
+    remove_distant_farms(dmax = .args[["dmax"]]) |> 
+    join_neighboring_centers(p = .args[["p"]], djoin = .args[["djoin"]]) |> 
+    collect_members() |> 
+    drop_small_communities(threshold = 3) |> 
+    define_boundaries(concavity_ratio = 0.1, dilate = c(130, -100)) |> 
+    get_community_data()
+
+}
+
+sensitivity <- function(x, args){
+
+  # it seems my computer isn't up to the task of doing this one in parallel
+  if (args[["agg_factor"]] == 1){
+    
+    dfs <- map(x, \(.x, .args = args){ 
+      
+      run_simulation(.x, .args)
+      
+    })
+    
+  } else {
+    
+    # there's no randomization in this code, but furrr belches out warnings
+    # anyway, so i add the furrr option to set seed.
+    dfs <- future_map(x, \(.x, .args = args){ 
+      
+      options(scipen = 9999)
+      terra::terraOptions(progress = 0, print = FALSE)
+      
+      run_simulation(.x, .args)
+      
+    }, .options = furrr_options(seed = 1701))
+    
+  }
+  
+  bind_rows(dfs)
+  
+}
+
+```
+
+```{r}
+#| time_it: true
+
+sensitivity_parameters <- bind_rows(
+  tibble(
+    focal_variable = "agg_factor",
+    agg_factor = 1:4,
+    dmax = one_hour,
+    p = 0.8,
+    djoin = half_hour
+  ),
+  tibble(
+    focal_variable = "dmax",
+    agg_factor = 3,
+    dmax = 60 * seq(40, 80, by = 10),
+    p = 0.8,
+    djoin = half_hour
+  ),
+  tibble(
+    focal_variable = "p",
+    agg_factor = 3,
+    dmax = one_hour,
+    p = seq(0.5, 0.9, by = 0.1),
+    djoin = half_hour
+  ),
+  tibble(
+    focal_variable = "djoin",
+    agg_factor = 3,
+    dmax = one_hour,
+    p = 0.8,
+    djoin = 60 * seq(20, 40, by = 5)
+  )
+)
+
+sensitivity_results <- sensitivity_parameters |> 
+  rowwise() |> 
+  mutate(
+    analysis = list(sensitivity(
+      c("cmv", "nrg", "cib"), 
+      args = list(
+        "agg_factor" = agg_factor, 
+        "dmax" = dmax, 
+        "p" = p, 
+        "djoin" = djoin
+      )
+    ))
+  ) |> 
+  ungroup()
+
+```
+
+```{r}
+#| code-fold: true
+
+graph_data <- sensitivity_results |> 
+  mutate(analysis = map(analysis, \(.x){
+    
+    .x |>
+      group_by(region) |>
+      summarize(
+        n_communities = n(),
+        area = median(area),
+        commute = median(commute/60),
+        room_density = median(room_density)
+      )
+    
+  })) |> 
+  unnest(analysis) |> 
+  pivot_longer(
+    c(n_communities, area, room_density, commute),
+    names_to = "outcome_variable",
+    values_to = "outcome_value"
+  ) |> 
+  mutate(
+    focal_value = case_when(
+      focal_variable == "dmax" ~ dmax,
+      focal_variable == "p" ~ p,
+      focal_variable == "djoin" ~ djoin,
+      focal_variable == "agg_factor" ~ agg_factor,
+      TRUE ~ NA
+    ),
+    focal_value = case_when(
+      focal_variable == "agg_factor" & focal_value == 1 ~ 27,
+      focal_variable == "agg_factor" & focal_value == 2 ~ 55,
+      focal_variable == "agg_factor" & focal_value == 3 ~ 82,
+      focal_variable == "agg_factor" & focal_value == 4 ~ 109,
+      TRUE ~ focal_value
+    ),
+    region = fct_relevel(region, "cmv", "nrg")
+  )
+
+agg_factor <- graph_data |> 
+  filter(focal_variable == "agg_factor") |> 
+  pull(focal_value) |> 
+  unique() |> 
+  sort()
+dmax <- 60 * seq(40, 80, by = 10)
+djoin <- 60 * seq(20, 40, by = 5)
+
+x_scale <- function(x, .labels = x){
+  scale_x_continuous(breaks = x, labels = .labels)
+}
+
+x_scales <- list(
+  focal_variable == "agg_factor" ~ x_scale(agg_factor),
+  focal_variable == "djoin" ~ x_scale(djoin, .labels = djoin/60),
+  focal_variable == "dmax" ~ x_scale(dmax, .labels = dmax/60),
+  focal_variable == "p" ~ x_scale(seq(0.5, 0.9, by = 0.1))
+)
+
+gg <- ggplot(graph_data, aes(focal_value, outcome_value, color = region)) + 
+  geom_line() +
+  geom_point(size = 1.2) +
+  scale_color_manual(
+    name = NULL, 
+    values = region_colors,
+    labels = region_labels
+  ) +
+  facet_grid(
+    rows = vars(outcome_variable),
+    cols = vars(focal_variable),
+    switch = "both",
+    labeller = squished_labels,
+    scales = "free"
+  ) +
+  facetted_pos_scales(x = x_scales) +
+  theme(
+    axis.title = element_blank(),
+    legend.box.margin = margin(b = -7),
+    legend.direction = "vertical",
+    legend.justification = "left",
+    legend.key.height = unit(10, "pt"),
+    legend.margin = margin(),
+    legend.position = "top",
+    legend.spacing.y = unit(5, "pt"),
+    strip.placement = "outside",
+    strip.text = element_text(size = rel(1), margin = margin(t = -1, b = 10))
+  ) +
+  guides(color = guide_legend(byrow = TRUE))
+
+fn <- here("figures", "sensitivity-analysis.png")
+
+ggsave(
+  plot = gg,
+  filename = fn,
+  width = 6.6,
+  height = 7.33,
+  dpi = 600
+)
+
+prepare_image(fn)
+
+remove(graph_data, agg_factor, dmax, djoin, x_scale, x_scales, gg, fn)
+
+```
+
+<div>
+
+![](../figures/sensitivity-analysis.png){width="100%"
+fig-alt="Figure shows results of sensitivity analysis."}
+
+Figure shows results of sensitivity analysis, focusing on three main paremeters
+(djoin, dmax, and p) and the level of aggregation of the grid, which corresponds
+to its resolution. Measures of some key outcomes are also shown, including the
+number of communities, their total area, room density, and average commute time
+from farms to the nearest community center.
+
+</div>
+
+### Save Results
+
+```{r}
+
+sensitivity_results |> 
+  unnest(analysis) |> 
+  write_csv(file = here("data", "sensitivity-analysis.csv"))
 
 ```
 
