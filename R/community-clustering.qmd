@@ -951,15 +951,29 @@ cib <- cib |> remove_distant_farms(dmax = one_hour)
 > $pN_1$ of $C_1$'s rooms are within a distance $D$ of $C_2$, then $C_1$ is part
 > of the same community as $C_2$.
 
-Here the population, $N$, of focal center $c$ is defined as
+Here the catchment room count, $N$, of focal center $c$ is defined as
 
-$$N_{c} = R_{c} + \sum_{k=1}^{S} R_{k} \cdot I(t_{kc} \leq D_{c})$$
+$$N_{c} = \sum_{k=1}^{S} R_{k} \cdot I(t_{kc} \leq D)$$
 
-for all sites $S$ (this includes both farms and centers), with $R_{c}$ being the
-room count at $c$ and $R_{k}$ the room count at site $k$, $t_{kc}$ the travel
-time from $k$ to $c$, $D_{c}$ the threshold travel time to $c$ (referred to as
-*D-join* in the paper), and $I$ the indicator function that is 1 if $t \leq D$
-and 0 otherwise.
+for all sites $S$ (including both farms and centers), with $R_{k}$ being the
+room count at site $k$, $t_{kc}$ the travel time from $k$ to $c$, $D$ the
+threshold travel time to a center (referred to as *D-join* in the paper), and
+$I$ the indicator function that is 1 if $t \leq D$ and 0 otherwise. Note that
+$S$ includes $c$ and that $t_{cc} = 0$ (the travel time from a center to the
+same center is precisely 0), so $R_{c}$ is always included in $N_{c}$.
+
+The catchment room count within $D$ of two centers $c$ and $d$ is then
+
+$$N_{cd} = \sum_{k=1}^{S} R_{k} \cdot I(t_{kc} \leq D) \cdot I(t_{kd} \leq D)$$
+
+and
+
+$$p_{cd} = N_{cd}/N_{c}$$
+
+so we could also state our rule as: if $p_{cd} \geq \alpha$ for some critical
+threshold $\alpha$, then $c$ is part of the same community as $d$. In this case,
+the default threshold is 0.8 relative to a commute time distance of one half
+hour.
 
 ```{r}
 #| code-fold: true
@@ -1056,7 +1070,7 @@ join_neighboring_centers <- function(x, p, djoin){
   # if a center is joined with a center that's joined with a center, etc.
   # i don't know how to do that in R
   # so, igraph it is...
-  g <- igraph::graph.adjacency(neighbors_matrix)
+  g <- igraph::graph_from_adjacency_matrix(neighbors_matrix)
   membership <- igraph::components(g)[["membership"]]
   
   # this gives us the community that every center is part of
@@ -1921,8 +1935,8 @@ fn <- here("figures", "sensitivity-analysis.png")
 ggsave(
   plot = gg,
   filename = fn,
-  width = 6.6,
-  height = 7.33,
+  width = 6.7,
+  height = 7.,
   dpi = 600
 )
 
