@@ -8,19 +8,7 @@ library(tigris)
 
 gpkg <- here("data", "community-centers.gpkg")
 
-# ggplot defaults ---------------------------------------------------------
-
 theme_set(theme_void(12))
-
-theme_update(
-  legend.position = "none"
-)
-
-region_colors <- c(
-  "cib" = "#D57300", 
-  "cmv" = "#009E8C", 
-  "nrg" = "#9B70FF"
-)
 
 region_labels <- c(
   "cmv" = "Central Mesa Verde",
@@ -150,38 +138,38 @@ landform_labels <- bind_rows(
     ys = 37.18730,
     x = -108.22973,
     y = 37.18730,
-    label = "Mesa Verde cuesta",
+    label = "Mesa Verde NP",
     hjust = 0
   ),
   tibble(
-    xs = -108.76792,
-    ys = 37.37004,
-    x = -108.68029,
-    y = 36.88939,
-    label = "Goodman Point",
+    xs = -108.58796,
+    ys = 37.34772,
+    x = -108.58796,
+    y = 36.90000,
+    label = "Cortez",
     hjust = 0
   ),
   tibble(
     xs = -108.80312,
     ys = 37.25547,
-    x = -108.75312,
-    y = 36.70939,
+    x = -108.80312,
+    y = 36.58000,
     label = "Ute Mountain",
     hjust = 0
   ),
   tibble(
-    xs = -108.92124,
-    ys = 37.58354,
-    x = -108.82029,
-    y = 36.52939,
-    label = "Lowry Ruins",
+    xs = -108.71978,
+    ys = 37.53321,
+    x = -108.71978,
+    y = 36.74000,
+    label = "Yellow Jacket",
     hjust = 0
   ),
   tibble(
     xs = -106.06021,
     ys = 36.08472,
     x = -106.06021,
-    y = 36.51664,
+    y = 36.68664,
     label = "Rio Grande",
     hjust = 1
   ),
@@ -190,14 +178,14 @@ landform_labels <- bind_rows(
     ys = 35.79290,
     x = -105.76874,
     y = 35.31012,
-    label = "Sangre de Cristo range",
+    label = "Sangre de Cristos",
     hjust = 1
   ),
   tibble(
     xs = -106.47031,
     ys = 36.03000,
     x = -106.62031,
-    y = 36.15000,
+    y = 36.03000,
     label = "Jemez Mountains",
     hjust = 1
   ),
@@ -205,46 +193,46 @@ landform_labels <- bind_rows(
     xs = -106.32063,
     ys = 35.80212,
     x = -106.62031,
-    y = 35.72000,
-    label = "Pajarito Plateau",
+    y = 35.80212,
+    label = "Bandelier NM",
     hjust = 1
   ),
   tibble(
-    xs = -106.11914,
-    ys = 35.89290,
-    x = -106.62031,
-    y = 35.94290,
-    label = "San Ildefonso Pueblo",
+    xs = -106.22200,
+    ys = 36.19475,
+    x = -106.22200,
+    y = 36.51664,
+    label = "Rio Chama",
     hjust = 1
   ),
   tibble(
-    xs = -106.31530,
-    ys = 35.63402,
-    x = -106.31530,
-    y = 35.50012,
-    label = "Cochiti Lake",
+    xs = -105.94354,
+    ys = 35.68533,
+    x = -105.94354,
+    y = 35.50000,
+    label = "Santa Fe",
     hjust = 1
   ),
   tibble(
     xs = -108.34242,
     ys = 35.03788,
-    x = -108.16589,
+    x = -108.16500,
     y = 35.00788,
     label = "El Morro",
     hjust = 0
   ),
   tibble(
-    xs = -108.99460,
-    ys = 35.41800,
-    x = -108.97460,
-    y = 35.69270,
-    label = "Manuelito",
+    xs = -108.74764,
+    ys = 35.52534,
+    x = -108.68000,
+    y = 35.52534,
+    label = "Gallup",
     hjust = 0
   ),
   tibble(
     xs = -108.49354,
     ys = 35.13384,
-    x = -108.16589,
+    x = -108.16500,
     y = 35.16384,
     label = "Ramah",
     hjust = 0
@@ -252,25 +240,25 @@ landform_labels <- bind_rows(
   tibble(
     xs = -108.85052,
     ys = 35.06641,
-    x = -108.83052,
-    y = 35.53270,
+    x = -108.85052,
+    y = 35.68000,
     label = "Zuni",
     hjust = 0
   ),
   tibble(
-    xs = -109.17369,
-    ys = 34.80055,
-    x = -109.12369,
-    y = 35.86270,
-    label = "Zuni Jaralosa Confluence",
+    xs = -108.99508,
+    ys = 35.41781,
+    x = -108.99508,
+    y = 35.84000,
+    label = "Manuelito",
     hjust = 0
   ),
   tibble(
-    xs = -108.79514,
-    ys = 34.71751,
-    x = -108.16589,
-    y = 34.80000,
-    label = "Jaralosa Canyon",
+    xs = -109.058124,
+    ys = 34.81859,
+    x = -108.16500,
+    y = 34.81859,
+    label = "Jaralosa Draw",
     hjust = 0
   )
 )
@@ -343,7 +331,6 @@ ggplot() +
     size = 11/.pt,
     hjust = 1
   ) +
-  scale_color_manual(name = NULL, values = region_colors) +
   geom_sf(
     data = st_as_sfc(bb8),
     color = "black",
