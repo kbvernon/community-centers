@@ -2,7 +2,7 @@
 .Rhistory
 .RData
 .Ruserdata
-
 /.quarto/
 /_misc/
 /data/
+*.docx
