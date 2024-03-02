@@ -54,11 +54,11 @@ knitr::knit_hooks$set(time_it = local({
 
 ```
 
-## Introudction
+## Introduction
 
 **Goal:** identify geographic communities
 
-**Data:** VEPII and Cibola databases
+**Data:** Village Ecodynamics Project and Southwest Social Networks databases
 
 **Method:** using a somewhat novel clustering algorithm outlined below
 
@@ -136,7 +136,7 @@ pretty_labels <- as_labeller(c(
   "area" = "Total Area [sq.km]",
   "djoin" = "D-join [mins]",
   "dmax" = "D-max [mins]",
-  "p" = "p [proportion in D-join]",
+  "p" = "P [proportion in D-join]",
   "agg_factor" = "Grid Resolution [m]"
 ))
 
@@ -150,7 +150,7 @@ squished_labels <- as_labeller(c(
   "area" = "Total Area\n[sq.km]",
   "djoin" = "D-join\n[mins]",
   "dmax" = "D-max\n[mins]",
-  "p" = "p\n[prop. in D-join]",
+  "p" = "P\n[prop. in D-join]",
   "agg_factor" = "Grid Resolution\n[m]"
 ))
 
@@ -424,19 +424,19 @@ reduces the resolution of the grid and by extension the number of grid cells the
 raster contains. Since the grid cells are nodes in the grid graph, aggregating
 simplifies the graph as well. This speeds up the path analysis considerably, but
 it does come at the cost of precision in terms of path analysis across the
-landscape, but that is not as bad as it sounds. The idea that we could build a
-model that is perfectly isomorphic with the actual or true path taken by people
-a thousand years ago is wildly implausible. The idea of the 'true path' is also
-problematic as we're not evaluating a single commute, but rather the path people
-should take more often than not. So, the real question is what level of
-precision is sufficient for evaluating that. And the answer is, of course, it
+landscape, though that is not as bad as it sounds. The idea that we could build
+a model that is perfectly isomorphic with the actual or true path taken by
+people a thousand years ago is wildly implausible. The idea of the 'true path'
+is also problematic as we're not evaluating a single commute, but rather the
+path people should take more often than not. So, the real question is what level
+of precision is sufficient for evaluating that. And the answer is, of course, it
 just depends.
 
 Are you walking blindfolded along the edge of a deep, precipitous cliff? Then
 centimeters are probably important to you - really, really important to you. But
 if you're just trying to get a reasonable estimate of the agricultural catchment
 of an entirely pedestrian population based on the distribution of farms around
-urban centers, probably the difference between \~30 m and \~80 m grid cells
+urban centers, probably the difference between \~30 m and \~90 m grid cells
 isn't that big of a deal. If that doesn't convince you, though, we do some
 limited sensitivity analysis down below.
 
@@ -604,10 +604,10 @@ cib <- cib |>
 
 ### Add distance matrix
 
-To calculate travel time between every pair of site points, we use a
-bi-directional version of Dijkstra's algorithm as implemented in the R package
-`{cppRouting}`. Note that we also average the from- and to- travel times, so the
-results are isotropic (meaning direction is irrelevant).
+To calculate travel time between every pair of site points, we use Dijkstra's
+algorithm as implemented in the R package `{cppRouting}`. Note that we also
+average the from- and to- travel times, so the results are isotropic (meaning
+direction is irrelevant).
 
 ```{r}
 #| code-fold: true
@@ -889,14 +889,13 @@ locations to nearest centers.
 Our community detection algorithm proceeds as follows:
 
 1.  Identify community centers
-2.  Remove distant farms
-3.  Join centers to their overlapping neighbors
+2.  Join centers to their overlapping neighbors
+3.  Remove distant farms
 4.  Join farms to their nearest center
 5.  Draw smallest concave hull encompassing all farms, centers, and paths
 
-Step 1 is already done and stored in the data. Step 2 can technically be done
-after 2 and 3, but it makes sense to do it first, since it means those sites can
-be ignored afterwards.
+Step 1 is already done and stored in the data. Step 3 is technically done before
+2 since it means those sites can be ignored afterwards.
 
 ### Filter out distant farms
 
@@ -945,18 +944,38 @@ cib <- cib |> remove_distant_farms(dmax = one_hour)
 
 ```
 
+```{r}
+#| code-fold: true
+
+list(cmv, nrg, cib) |> 
+  map(\(x){
+    
+    tibble(
+      region = attr(x, "name"),
+      n_outliers = attr(x, "n_outliers")
+    )
+    
+  }) |> 
+  bind_rows() |> 
+  gt() |> 
+  tab_header("No. of Dropped Farms") |> 
+  opt_align_table_header("left") |> 
+  tab_options(column_labels.hidden = TRUE)
+
+```
+
 ### Join neighboring centers
 
 > For any two centers $C_1$ and $C_2$ with catchment room counts $N_1 < N_2$, if
 > $pN_1$ of $C_1$'s rooms are within a distance $D$ of $C_2$, then $C_1$ is part
 > of the same community as $C_2$.
 
-Here the catchment room count, $N$, of focal center $c$ is defined as
+Here the catchment room count, $N$, of focal center $i$ is defined as
 
-$$N_{c} = \sum_{k=1}^{S} R_{k} \cdot I(t_{kc} \leq D)$$
+$$N_{c} = \sum_{i=1}^{S} R_{i} \cdot I(t_{ic} \leq D)$$
 
-for all sites $S$ (including both farms and centers), with $R_{k}$ being the
-room count at site $k$, $t_{kc}$ the travel time from $k$ to $c$, $D$ the
+for all sites $S$ (including both farms and centers), with $R_{i}$ being the
+room count at site $i$, $t_{ic}$ the travel time from $i$ to $c$, $D$ the
 threshold travel time to a center (referred to as *D-join* in the paper), and
 $I$ the indicator function that is 1 if $t \leq D$ and 0 otherwise. Note that
 $S$ includes $c$ and that $t_{cc} = 0$ (the travel time from a center to the
@@ -964,7 +983,7 @@ same center is precisely 0), so $R_{c}$ is always included in $N_{c}$.
 
 The catchment room count within $D$ of two centers $c$ and $d$ is then
 
-$$N_{cd} = \sum_{k=1}^{S} R_{k} \cdot I(t_{kc} \leq D) \cdot I(t_{kd} \leq D)$$
+$$N_{cd} = \sum_{i=1}^{S} R_{i} \cdot I(t_{ic} \leq D) \cdot I(t_{id} \leq D)$$
 
 and
 
@@ -981,95 +1000,72 @@ hour.
 join_neighboring_centers <- function(x, p, djoin){
   
   # subset dm (distance matrix) to get dm[farms and centers, centers]
-  center_cells <- x[["cell_table"]] |> filter(center == 1) |> pull(cell)
+  i <- x[["cell_table"]] |> pull(cell)
+  j <- x[["cell_table"]] |> filter(center == 1) |> pull(cell)
   
-  j <- which(colnames(x[["dm"]]) %in% center_cells)
+  i <- which(rownames(x[["dm"]]) %in% i)
+  j <- which(colnames(x[["dm"]]) %in% j)
   
-  dm <- x[["dm"]][, j]
-    
+  dm <- x[["dm"]][i, j]
+  
+  # room count in each farm/center
+  Rk <- x[["cell_table"]] |> pull(n_room)
+  names(Rk) <- x[["cell_table"]] |> pull(cell)
+  
+  # want to make sure these are arranged in the same order as rows in dm
+  Rk <- Rk[rownames(dm)]
+  
   # find farms and centers that are within distance djoin of other centers
-  djoins <- apply(dm, 1, \(.x){ which(.x <= djoin) })
+  # this creates a binary/logical matrix of 1s and 0s,
+  # which is what you get from the indicator function:
+  # 1 if row is in distance djoin of column, 0 otherwise
+  B <- matrix(as.numeric(dm <= djoin), nrow = nrow(dm))
   
-  # remove farms that are isolated (ie, greater than djoin from a center)
-  # note: this should just be farms because all centers are less than
-  #   djoin from themselves
-  djoins <- djoins[lengths(djoins) > 0]
+  dimnames(B) <- dimnames(dm)
+  
+  # square community centers matrix
+  G <- matrix(NA, nrow = ncol(dm), ncol = ncol(dm))
+  
+  colnames(G) <- colnames(dm)
+  rownames(G) <- colnames(dm)
+  
+  # get total number of rooms within djoin of each center
+  # this multiplies each column of B (which is just a bunch of 0s and 1s)
+  # by the room count vector Rk, then takes the sum of the columns. 
+  # we put this into the diagonal because it answers the question:
+  # how many rooms does a center share with itself?
+  # this is Nc. or Ncc since d = c.
+  diag(G) <- colSums(B * Rk)
+  
+  # get shared room count (Ncd) within djoin of all pairs of centers
+  # note we dump this into the lower triangle! this is a real R gotcha
+  # as the vector is passed into the matrix by column, not row, so you 
+  # can't do this with the upper triangle!
+  lt <- lower.tri(G)
+  
+  G[lt] <- combn(
+    ncol(B), 
+    m = 2, 
+    FUN = \(.x){ sum(B[, .x[1]] * B[, .x[2]] * Rk) }
+  )
+  
+  # this matrix should be symmetric: 
+  # the diagonal is Ncc, the room count a center shares with itself
+  # the off-diagonals are Ncd = Ndc, the room counts shared between different centers
+  ut <- upper.tri(G)
+  
+  G[ut] <- t(G)[ut]
+  
+  # create adjacency matrix
+  # by dividing each column of G by the diagonal of G, we get the proportion
+  # of the shared room count to the total room count, so p or pcd
+  # we then compare this to the critical threshold, to determine adjacency
+  neighbors_matrix <- (G / diag(G)) >= p
 
-  # collect list into a long-form table
-  djoins <- tibble(
-    center = colnames(dm)[unlist(djoins)],
-    farm_or_center = rep(names(djoins), lengths(djoins))
-  ) |> mutate(across(everything(), as.numeric))
-  
-  # now we combine the room counts with the djoins table
-  djoins <- djoins |> 
-    left_join(
-      x[["cell_table"]] |> select(-center), 
-      by = join_by(farm_or_center == cell)
-    ) |> 
-    rename("population" = n_room)
-  
-  # calculate the total population of the catchment around each center
-  # note that this involves a lot of double-counting, farms and centers
-  # counting towards the population size of multiple centers, but this is OK
-  # as we are interested in using the shared population as a measure of 
-  # interaction between centers, not as an estimate of a community's population
-  gen_pop <- djoins |> 
-    group_by(center) |> 
-    summarize(population = sum(population))
-  
-  # for each center, what other centers have larger catchment populations?
-  # using outer() is extremely fast
-  # in this case, it creates an asymmetric logical matrix
-  R <- outer(gen_pop[["population"]], gen_pop[["population"]], FUN = '<=')
-  diag(R) <- FALSE
-  
-  colnames(R) <- gen_pop[["center"]]
-  rownames(R) <- gen_pop[["center"]]
-  
-  # now, we turn that matrix into a big list 
-  # each element is a vector with the cell IDs of the larger centers
-  R <- apply(R, 1, which)
-  R <- map(R, \(x){ as.numeric(names(x)) })
-  
-  # for each center, we look at all the centers with bigger catchment
-  # populations than it, and ask: is the shared population size some fraction
-  # of the total population of the catchment?
-  neighbors_matrix <- purrr::imap(R, \(x, idx){
-    
-    N <- gen_pop |> 
-      filter(center == as.numeric(idx)) |> 
-      pull(population)
-    
-    focal_neighbors <- djoins |> 
-      filter(center == as.numeric(idx)) |> 
-      pull(farm_or_center)
-
-    cntrs <- djoins |> 
-      filter( # this filter gives the intersection of farms/cells 
-        center %in% x,
-        farm_or_center %in% c(idx, focal_neighbors)
-      ) |> 
-      group_by(center) |> 
-      summarize(proportion = sum(population)/N) |> 
-      filter(proportion >= p) |> 
-      pull(center)
-    
-    # return a logical vector the length of R
-    names(R) %in% cntrs
-    
-  })
-  
-  neighbors_matrix <- do.call("rbind", neighbors_matrix)
-  diag(neighbors_matrix) <- TRUE
-  
-  colnames(neighbors_matrix) <- names(R)
-  rownames(neighbors_matrix) <- names(R)
-  
-  # there's a recursive dimension to this:
+  # now to separate them into communities
+  # unfortunately, there's a recursive dimension to this:
   # if a center is joined with a center that's joined with a center, etc.
-  # i don't know how to do that in R
-  # so, igraph it is...
+  # i don't know how to do that in R, so igraph it is...
   g <- igraph::graph_from_adjacency_matrix(neighbors_matrix)
   membership <- igraph::components(g)[["membership"]]
   
@@ -1099,6 +1095,26 @@ half_hour <- 1800
 cmv <- cmv |> join_neighboring_centers(p = 0.8, djoin = half_hour)
 nrg <- nrg |> join_neighboring_centers(p = 0.8, djoin = half_hour)
 cib <- cib |> join_neighboring_centers(p = 0.8, djoin = half_hour)
+
+```
+
+```{r}
+#| code-fold: true
+
+list(cmv, nrg, cib) |> 
+  map(\(x){
+    
+    tibble(
+      region = attr(x, "name"),
+      n_communities = attr(x, "n_communities")
+    )
+    
+  }) |> 
+  bind_rows() |> 
+  gt() |> 
+  tab_header("No. of Communities") |> 
+  opt_align_table_header("left") |> 
+  tab_options(column_labels.hidden = TRUE)
 
 ```
 
@@ -1199,6 +1215,26 @@ cib <- cib |>
 
 ```
 
+```{r}
+#| code-fold: true
+
+list(cmv, nrg, cib) |> 
+  map(\(x){
+    
+    tibble(
+      region = attr(x, "name"),
+      n_dropped = attr(x, "n_dropped")
+    )
+    
+  }) |> 
+  bind_rows() |> 
+  gt() |> 
+  tab_header("No. of Dropped Communities") |> 
+  opt_align_table_header("left") |> 
+  tab_options(column_labels.hidden = TRUE)
+
+```
+
 ### Define boundaries
 
 Now that we have community centers joined to their overlapping neighbors, and
@@ -1230,7 +1266,8 @@ small buffer.
 Note that we also do some graph pruning in each iteration, basically cropping
 the graph to an expanded area around the points assigned to a specific
 community. This prevents the search algorithm from searching out away from the
-other sites in the community.
+other sites in the community. The distance used for pruning is only meaningful
+for pedestrian commute times.
 
 ```{r}
 #| code-fold: true
@@ -1346,7 +1383,8 @@ cib <- cib |> define_boundaries(concavity_ratio = 0.1, dilate = c(130, -100))
 ## Results
 
 Here we show the community polygons themselves as well as the log-density of
-rooms in each.
+rooms in each. Note the very pronounced edge effect along Mesa Verde National
+Park's administrative boundary.
 
 ```{r}
 #| code-fold: true
@@ -1935,8 +1973,8 @@ fn <- here("figures", "sensitivity-analysis.png")
 ggsave(
   plot = gg,
   filename = fn,
-  width = 6.7,
-  height = 7.,
+  width = 7.1,
+  height = 7.3,
   dpi = 600
 )
 
