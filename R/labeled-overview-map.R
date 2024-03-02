@@ -1,4 +1,6 @@
 
+library(ggfx)
+library(ggspatial)
 library(here)
 library(sf)
 library(terra)
@@ -110,18 +112,23 @@ suppressWarnings({
   
 })
 
-x <- bb8[["xmax"]]
+y_ut <- four_corners |> 
+  filter(name == "Utah") |> 
+  st_bbox()
 
-y <- four_corners |> 
+y_ut <- y_ut[["ymin"]]
+
+y_co <- four_corners |> 
   filter(name == "Colorado") |> 
   st_bbox()
 
-y <- y[["ymin"]]
+y_co <- y_co[["ymin"]]
 
 state_labels <- tibble(
-  x = x - 0.05,
-  y = y + c(0.07, -0.07),
-  label = c("Colorado", "New Mexico")
+  x = c(bb8[["xmin"]] + c(0.05, 0.05), bb8[["xmax"]] - c(0.05, 0.05)), 
+  y = c(y_ut + c(0.07, -0.07), y_co + c(0.07, -0.07)),
+  label = c("UT", "AZ", "CO", "NM"),
+  hjust = c(0, 0, 1, 1)
 )
 
 landform_labels <- bind_rows(
@@ -209,7 +216,7 @@ landform_labels <- bind_rows(
     xs = -105.94354,
     ys = 35.68533,
     x = -105.94354,
-    y = 35.50000,
+    y = 35.48000,
     label = "Santa Fe",
     hjust = 1
   ),
@@ -218,7 +225,7 @@ landform_labels <- bind_rows(
     ys = 35.03788,
     x = -108.16500,
     y = 35.00788,
-    label = "El Morro",
+    label = "El Morro NM",
     hjust = 0
   ),
   tibble(
@@ -263,7 +270,7 @@ landform_labels <- bind_rows(
   )
 )
 
-remove(x, y)
+remove(y_ut, y_co)
 
 # map ---------------------------------------------------------------------
 
@@ -276,60 +283,77 @@ ggplot() +
   ) +
   geom_sf(
     data = cover,
-    fill = alpha("white", 0.75)
+    fill = alpha("white", 0.5)
   ) +
   geom_sf(
     data = four_corners,
     fill = "transparent",
+    color = "gray20",
     linewidth = 0.2
   ) +
   geom_sf(
     data = regions,
     color = "black",
-    fill = "transparent",
+    fill = alpha("white", 0.05),
     linewidth = 0.5
   ) +
-  geom_segment(
-    data = landform_labels,
-    aes(x, y, xend = xs, yend = ys),
-    linewidth = 0.6,
-    color = "white"
+  with_outer_glow(
+    geom_segment(
+      data = landform_labels,
+      aes(x, y, xend = xs, yend = ys),
+      linewidth = 0.27,
+      color = "gray20"
+    ),
+    colour = "white",
+    expand = 4,
+    sigma = 2
+  ) +
+  with_outer_glow(
+    geom_label(
+      data = landform_labels,
+      aes(x, y, label = label),
+      size = 11/.pt,
+      color = "gray20",
+      hjust = landform_labels[["hjust"]]
+    ),
+    colour = "white",
+    expand = 3,
+    sigma = 2
   ) +
   geom_segment(
     data = landform_labels,
     aes(x, y, xend = xs, yend = ys),
-    linewidth = 0.2,
+    linewidth = 0.27,
     color = "gray20"
   ) +
   geom_point(
     data = landform_labels,
     aes(xs, ys),
     color = "white",
-    size = 0.75
+    size = 0.85
   ) +
-  geom_label(
-    data = landform_labels,
-    aes(x, y, label = label),
-    size = 11/.pt,
-    color = "gray20",
-    hjust = landform_labels[["hjust"]]
-  ) +
-  geom_text(
-    data = region_labels_xy,
-    aes(x, y, label = label),
-    color = "black",
-    size = 16/.pt,
-    hjust = c(0, 1, 0),
-    vjust = 1,
-    nudge_x = c(0.05, -0.05, 0.05),
-    nudge_y = -0.01
+  with_outer_glow(
+    geom_text(
+      data = region_labels_xy,
+      aes(x, y, label = label),
+      color = "black",
+      fontface = "bold", 
+      size = 16/.pt,
+      hjust = c(0, 1, 0),
+      vjust = 1,
+      nudge_x = c(0.05, -0.05, 0.05),
+      nudge_y = -0.01
+    ),
+    colour = "white",
+    expand = 4,
+    sigma = 1
   ) +
   geom_text(
     data = state_labels,
     aes(x, y, label = label),
     color = "gray20",
-    size = 11/.pt,
-    hjust = 1
+    size = 10/.pt,
+    hjust = state_labels[["hjust"]]
   ) +
   geom_sf(
     data = st_as_sfc(bb8),
@@ -343,6 +367,12 @@ ggplot() +
     xlim = bb8[c("xmin", "xmax")],
     ylim = bb8[c("ymin", "ymax")],
     expand = FALSE
+  ) +
+  annotation_scale(
+    aes(location = "br"),
+    pad_x = unit(0.45, "cm"),
+    pad_y = unit(0.45, "cm"),
+    text_cex = 0.9
   )
 
 ggsave(
