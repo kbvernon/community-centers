@@ -274,12 +274,13 @@ Regional Summaries
 Our clustering algorithm draws inspiration from the procedure used by the United
 States Office of Management and Budget to define Core Based Statistical Areas
 (CBSA) [@usomb2021]. We start by defining a core area, in this case a community
-center location. We then merge core areas into larger agglomerations based on
-the proportion of their populations that they share. Our method may be described
-as a guided density-based clustering algorithm in that it does not rely on a
-random set of points when initialized. Instead, the selection of core areas is
-guided by archaeological data and regional expertise. We think this is a key
-argument in its favor.
+center location. We then associate outlying areas with their nearest core area
+and merge core areas into larger agglomerations based on the proportion of their
+populations that they share. Our method may be described as a guided
+density-based clustering algorithm in that it does not rely on a random set of
+points when initialized. Instead, the selection of core areas is guided by
+archaeological data and regional expertise. We think this is a key argument in
+its favor.
 
 From an archaeological perspective, one can think of our algorithm as combining
 insights from @varien1999 and @reese_etal2019, specifically Varien's idea of a
@@ -859,7 +860,7 @@ community organization and the types of communities they foster. Examples
 include biological communities organized around genetic relatedness or physical
 similarities [@becker_juengst2017; @kakaliouras2017; @blom2005; @blom2017],
 imagined or ideational communities organized around perceived membership and
-metaphors [sometimes called *styles of imaginings;* @ortman2011; @anderson1983;
+metaphors [sometimes called *styles of imaginings;* @anderson1983; @ortman2011;
 @isbell2000], reproductive communities organized around mating opportunities
 [@mahoney_etal2000; @kolb_snead1997], religious communities organized around a
 shared sense of the sacred [@bernardini2004; @malville_malville2001], linguistic
