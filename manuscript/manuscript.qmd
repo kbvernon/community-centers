@@ -674,7 +674,8 @@ north-south canyon at the base of the Sangre de Cristos. Additional high density
 communities are observed on the Pajarito Plateau in Bandelier NM. In the CIB
 area, the three densest communities can be found in the far eastern edge of the
 study area near El Morro NM, with additional dense communities near Ramah just
-to the west of El Morro and Manuelito in the northwest.
+to the west of El Morro, southeast of Zuni near the center of Cibola, and south
+of Manuelito in the northwest.
 
 ::: {#tbl-results}
 ```{=latex}

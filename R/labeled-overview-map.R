@@ -297,16 +297,11 @@ ggplot() +
     fill = alpha("white", 0.05),
     linewidth = 0.5
   ) +
-  with_outer_glow(
-    geom_segment(
-      data = landform_labels,
-      aes(x, y, xend = xs, yend = ys),
-      linewidth = 0.27,
-      color = "gray20"
-    ),
-    colour = "white",
-    expand = 4,
-    sigma = 2
+  geom_segment(
+    data = landform_labels,
+    aes(x, y, xend = xs, yend = ys),
+    linewidth = 0.5,
+    color = "white"
   ) +
   with_outer_glow(
     geom_label(
@@ -320,17 +315,11 @@ ggplot() +
     expand = 3,
     sigma = 2
   ) +
-  geom_segment(
-    data = landform_labels,
-    aes(x, y, xend = xs, yend = ys),
-    linewidth = 0.27,
-    color = "gray20"
-  ) +
   geom_point(
     data = landform_labels,
     aes(xs, ys),
     color = "white",
-    size = 0.85
+    size = 1
   ) +
   with_outer_glow(
     geom_text(
@@ -345,7 +334,7 @@ ggplot() +
       nudge_y = -0.01
     ),
     colour = "white",
-    expand = 4,
+    expand = 5,
     sigma = 1
   ) +
   geom_text(

@@ -327,13 +327,20 @@ plot.region <- function(x, ...){
   hill <- setValues(hill, scales::rescale(values(hill), to = c(1, 1000)))
   hill <- round(hill)
   
+  h <- list(
+    shade = hill,
+    grays = hcl.colors(1000, "Grays")[values(hill)]
+  )
+  
   ggplot() +
     geom_spatraster(
-      data = hill, 
-      fill = hcl.colors(1000, "Grays")[values(hill)],
+      data = h[["shade"]], 
+      fill = h[["grays"]],
       maxcell = Inf
     ) +
     geom_spatraster(data = x[["dem"]], alpha = 0.5) +
+    scale_fill_distiller(palette = "Greys", guide = "none") +
+    ggnewscale::new_scale_fill() +
     scale_fill_hypso_c(
       name = "Elevation (m)",
       palette = "utah_1",
@@ -347,10 +354,10 @@ plot.region <- function(x, ...){
         shape = 16,
         color = "gray25",
         alpha = 0.5,
-        size = 0.6
+        size = 0.8
       ),
       colour = "white",
-      sigma = 0.5,
+      sigma = 1,
       expand = 1
     ) +
     with_outer_glow(
@@ -358,11 +365,11 @@ plot.region <- function(x, ...){
         data = x[["sites"]] |> filter(center == 1),
         shape = 17,
         color = "#CD3C00",
-        alpha = 0.8,
-        size = 1.1
+        alpha = 0.9,
+        size = 1
       ),
       colour = "white",
-      sigma = 0.5,
+      sigma = 1,
       expand = 1
     ) +
     annotation_scale(
@@ -390,7 +397,7 @@ fn <- here("figures", "overview-maps.png")
 ggsave(
   plot = gg,
   filename = fn,
-  width = 7.5, 
+  width = 7, 
   height = 4.5,
   dpi = 600,
   bg = "white"
@@ -617,17 +624,6 @@ add_distance_matrix <- function(x){
   cell_ids <- x[["cell_table"]][["cell"]]
   
   cells_in_graph <- x[["graph"]][["dict"]][["ref"]]
-  
-  missing_cells <- setdiff(cell_ids, cells_in_graph)
-  
-  if (length(missing_cells) > 0){
-    
-    cli::cli_abort(c(
-      "Some grid cells have sites but are not in the graph!",
-      "i" = "Cells: {missing_cells}"
-    ))
-    
-  }
   
   dm <- get_distance_matrix(
     x[["graph"]],
@@ -889,13 +885,15 @@ locations to nearest centers.
 Our community detection algorithm proceeds as follows:
 
 1.  Identify community centers
-2.  Join centers to their overlapping neighbors
+2.  Join farms to their nearest center
 3.  Remove distant farms
-4.  Join farms to their nearest center
+4.  Join centers to their overlapping neighbors
 5.  Draw smallest concave hull encompassing all farms, centers, and paths
 
-Step 1 is already done and stored in the data. Step 3 is technically done before
-2 since it means those sites can be ignored afterwards.
+Step 1 is already done and stored in the data. Step 2 is technically done after
+step 4. It just makes more sense to think of it coming first, like we're
+building *up* to the community - simply put, small things connect to big things,
+and big things merge into even bigger things.
 
 ### Filter out distant farms
 
@@ -1391,23 +1389,17 @@ Park's administrative boundary.
 
 visualize_communities <- function(x){
   
-  hell <- function(x, n = 1000){
-    
-    slope <- terrain(x, "slope", unit = "radians")
-    aspect <- terrain(x, "aspect", unit = "radians")
-    
-    hill <- shade(slope, aspect, 30, 45)
-    hill <- setValues(hill, scales::rescale(values(hill), to = c(1, n)))
-    hill <- round(hill)
-    
-    list(
-      shade = hill,
-      grays = hcl.colors(n, "Grays")[values(hill)]
-    )
-    
-  }
+  slope <- terrain(x[["dem"]], "slope", unit = "radians")
+  aspect <- terrain(x[["dem"]], "aspect", unit = "radians")
   
-  h <- hell(x[["dem"]])
+  hill <- shade(slope, aspect, 30, 45)
+  hill <- setValues(hill, scales::rescale(values(hill), to = c(1, 1000)))
+  hill <- round(hill)
+  
+  h <- list(
+    shade = hill,
+    grays = hcl.colors(1000, "Grays")[values(hill)]
+  )
   
   members <- x[["cell_table"]] |> 
     group_by(community) |> 
@@ -1481,7 +1473,7 @@ zg <- list(cmv, nrg, cib) |>
 # patchwork is great, but not perfect...
 bob <- theme(
   legend.box.margin = margin(t = -10),
-  legend.key.size = unit(0.5, "cm"),
+  legend.key.size = unit(0.43, "cm"),
   legend.margin = margin(),
   legend.justification = "left",
   legend.position = "bottom"
@@ -1493,7 +1485,7 @@ fn <- here("figures", "communities-all.png")
 ggsave(
   plot = zg + plot_layout(guides = "collect") & bob,
   filename = fn,
-  width = 7.5, 
+  width = 7, 
   height = 4.5,
   dpi = 600,
   bg = "white"
