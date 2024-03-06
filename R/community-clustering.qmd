@@ -847,7 +847,7 @@ gg <- ggplot() +
   ) +
   labs(
     x = "Commute to Nearest Center [mins]",
-    y = "Density\nlog(Observed) - log(Random)"
+    y = "Probability Density\nlog(Observed) - log(Random)"
   ) +
   scale_x_continuous(
     breaks = seq(0, 120, by = 30), 

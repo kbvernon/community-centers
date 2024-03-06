@@ -18,7 +18,7 @@ author:
     affiliations:
       - ref: colorado
 abstract: |
-  The transition from dispersed to aggregated forms of settlement reflects a critical shift in the relative value of social and primary (food) modes of production. However, investigating trade-offs between them requires estimates of the extent of community territories, including their nearby arable land. Here we demonstrate a simple algorithm to do that. Our algorithm is analogous to that used to define core-based statistical areas for the US census, though instead of modern metropolitan areas, we rely on community centers (or areas of known and persistent interaction between unrelated individuals). We provide examples of our algorithm by applying it to archaeological sites in the central Mesa Verde, northern Rio Grande, and Cibola regions. A sensitivity analysis is also conducted to demonstrate how each tuning parameter contributes to the algorithm.
+  The transition from dispersed to aggregated forms of settlement reflects a critical shift in the relative value of social and primary (food) modes of production. However, investigating trade-offs between these different forms of settlement requires estimates of the extent of community territories, including their nearby arable land. Here we demonstrate a simple algorithm to do that. Our algorithm is analogous to that used to define core-based statistical areas for the US census, though instead of central business districts, we rely on community centers (or areas of known and persistent interaction between unrelated individuals). We provide examples of our algorithm by applying it to archaeological sites in the central Mesa Verde, northern Rio Grande, and Cibola regions in the US Southwest. A sensitivity analysis is also conducted to demonstrate how each tuning parameter contributes to the algorithm.
 keywords:
   - Aggregation
   - Core-Based Statistical Area
@@ -49,12 +49,13 @@ and infectious disease rates [@angel_etal2021; @bettencourt2021;
 contains physical traces of community formations with a wide range of densities,
 often glossed as "dispersed" or "aggregated" [@birch2013; @drennan_etal2015;
 @gyucha2019]. The primary difference between the two has to do with the spatial
-distribution of residents relative to primary (food) production. In dispersed
-formations, households are scattered across an area, interspersed with the land
-that they farmed, thus requiring them to commute to central places for various
-forms of social production. In aggregated formations, in contrast, households
-are clustered in a village or town, such that they reside in locations of social
-production, but must commute to fields for primary production.
+distribution of residents relative to areas of primary (food) production. In
+dispersed formations, households are scattered across an area, interspersed with
+the land that they farmed, thus requiring them to commute to central places for
+various forms of social production. In aggregated formations, in contrast,
+households are clustered in a village or town, such that they reside in
+locations of social production, but must commute to fields for primary
+production.
 
 From a complex systems perspective, the main way these two settlement
 morphologies vary is with respect to which costs are being minimized. In the
@@ -101,47 +102,47 @@ archaeological data from different portions of the ancestral Pueblo region of
 the US Southwest, using the locations of what we call community centers as
 tethers for defining territories that we infer were used by social communities
 over extended periods of time [@glowacki_ortman2012; @varien_etal2007]. In some
-regions these are sites containing more households than could plausibly be
-related by reckoned kinship or some form of civic architecture. The key feature
+regions, community centers are sites containing civic architecture, or more
+households than could plausibly be related by reckoned kinship. The key feature
 of these centers is that they represent locations against which travel time
 distances to other sites can be compared.
 
 While not strictly required by our algorithm, we make the simplifying assumption
 that once established, community territories were relatively fixed in space for
-the duration of their associated sites. This allows us to use the distribution
-of all recorded residences, regardless of their periods of occupation, in
-defining community territories. There are several reasons why we believe this is
-a reasonable simplification. First, there are strong cross-cultural regularities
-in the time individuals spend in daily travel from and to their residences, so
-dispersed farming communities tend to be dispersed across the distance
-associated with this typical travel time, regardless of the number of households
-involved [@marchetti1994]. Second, the archaeological record of our study areas
-supports the idea that community territories did not shrink when their
-populations aggregated into villages. In some cases, farmsteads were converted
-to field houses, with some building materials being reused elsewhere and
-evidence for continued limited activity use [@varien1999; @varien1999a;
-@varien2002]. In other cases, grid gardens were constructed directly within
-older rubble mounds by residents of newer, aggregated villages nearby
-[@gauthier_herhahn2005]. Third, an analysis that allowed community territories
-to vary by time step would reduce variation in the density of the resulting
-units, thus washing out variation in one of the most important social properties
-one would ideally want to examine. Fourth, in areas where there is strong survey
-coverage, dispersed residences form clusters, often but not always centered on a
-few larger settlements, and this clustering is apparent even when the dispersed
-residences are plotted by time step [@schachner2012; @varien2002]. Fifth, the
-effects of population growth for dispersed farming communities are not parallel
-to the effects of population expansion in aggregated settlements. In the latter,
-the area of the settlement must grow somewhat because the residential density is
-already relatively high. But in dispersed settlements, there is often unused
-land between existing farmsteads that can be settled. This, combined with the
-strong cross-cultural regularity in typical commute times, leads to much greater
-consistency in the spatial extent of residents in a dispersed community than in
-the case of an aggregated community. Finally, given the inherent incompleteness
-of the archaeological record, it seems most appropriate to use all remains to
-define what is effectively the maximum extent of community territories. While it
-was undoubtedly true that individual community territories expanded or
-contracted over time, the assumption of constant area seems more reasonable than
-the assumption of constant density.
+the duration of the occupations of their associated sites. This allows us to use
+the distribution of all recorded residences, regardless of their periods of
+occupation, in defining community territories. There are several reasons why we
+believe this is a reasonable simplification. First, there are strong
+cross-cultural regularities in the time individuals spend in daily travel from
+and to their residences, so dispersed farming communities tend to be dispersed
+across the distance associated with this typical travel time, regardless of the
+number of households involved [@marchetti1994]. Second, the archaeological
+record of our study areas supports the idea that community territories did not
+shrink when their populations aggregated into villages. In some cases,
+farmsteads were converted to field houses, with some building materials being
+reused elsewhere and evidence for continued limited activity use [@varien1999;
+@varien1999a; @varien2002]. In other cases, grid gardens were constructed
+directly within older rubble mounds by residents of newer, aggregated villages
+nearby [@gauthier_herhahn2005]. Third, an analysis that allowed community
+territories to vary by time step would reduce variation in the density of the
+resulting units, thus washing out variation in one of the most important social
+properties one would ideally want to examine. Fourth, in areas where there is
+strong survey coverage, dispersed residences form clusters, often but not always
+centered on a few larger settlements, and this clustering is apparent even when
+the dispersed residences are plotted by time step [@schachner2012; @varien2002].
+Fifth, the effects of population growth for dispersed farming communities are
+not parallel to the effects of population expansion in aggregated settlements.
+In the latter, the area of the settlement must grow somewhat because the
+residential density is already relatively high. But in dispersed settlements,
+there is often unused land between existing farmsteads that can be settled.
+This, combined with the strong cross-cultural regularity in typical commute
+times, leads to much greater consistency in the spatial extent of residents in a
+dispersed community than in the case of an aggregated community. Finally, given
+the inherent incompleteness of the archaeological record, it seems most
+appropriate to use all remains to define what is effectively the maximum extent
+of community territories. While it was undoubtedly true that individual
+community territories expanded or contracted over time, the assumption of
+constant area seems more reasonable than the assumption of constant density.
 
 # Data
 
@@ -538,7 +539,7 @@ but this tends to exaggerate the total area of the community, especially when
 the distribution of points is suggestive of a concave shape, like the letter
 'C'. A concave hull would handle peculiar shapes, but it would also introduce
 the opposite problem, restricting the area of the community to an unreasonable
-degree. Our somewhat brute force way of threading this needle is to identify
+degree. Our somewhat brute force way of balancing these factors is to identify
 paths with shortest commute times between the outer most farms in a community,
 extract the vertices from those paths, and then incorporate those into the set
 of points used to define the concave hull. The result is a polygon that is
@@ -570,10 +571,10 @@ jogs, and trail runs from nearly 30,000 individuals in Salt Lake City, UT,
 @campbell_etal2019 offer what is easily the most empirically robust estimate of
 hiking speed to date. Our application of Campbell's hiking function relies on
 coefficients from the fifth percentile of individuals in their sample, using the
-Lorentz curve as recommended by Campbell, and assumes that everyone in the areas
-of our analysis were largely equal in their walking speed and endurance. This
-makes their walking speeds comparable to, but not the same as, what would be
-estimated by Tobler's hiking function [@tobler1993].
+Cauchy (or Lorentz) distribution as recommended by Campbell, and assumes that
+everyone in the areas of our analysis were largely equal in their walking speed
+and endurance. This makes their walking speeds comparable to, but not the same
+as, what would be estimated by Tobler's hiking function [@tobler1993].
 
 To calculate travel or commute times, we first download a 1 Arc-second digital
 elevation model (DEM) for each study area from the @usgs2023 3D Elevation
@@ -637,7 +638,8 @@ with the Greek letter $\eta$), indicating skew in the data and the potential
 presence of large outliers. This is illustrated in the boxplots in
 @fig-densities, which show the distributions of these and other variables of
 interest that can be derived from our analysis and also used to evaluate its
-merits (see also @tbl-results).
+merits (see also @tbl-results). Note that these summaries are time-insensitive.
+They represent the total archaeological sample in each region.
 
 ::: {#fig-communities fig-align="center"}
 ![](../figures/communities-all.png){width="6.5in"}
@@ -658,7 +660,7 @@ helps to normalize the distribution and, in particular, to rein in large
 outliers that swamp the variance. It is important to note, too, that values in
 each region are re-scaled to be in the same range, so the figure cannot be used
 to estimate absolute differences between regions. Still, the relative
-differences within each region can be enlightening, but even they must be
+differences within each region can be enlightening, though even they must be
 interpreted with caution.
 
 Not surprisingly, virtually all of the Mesa Verde NP communities show high
@@ -667,12 +669,12 @@ north of Ute Mountain also has a relatively high density, as do several of the
 communities west of Yellow Jacket and along the Dolores River. In the NRG, the
 highest density community is near the center of the region. It juts out from the
 Rio Grande at its confluence with the Pojoaque River and includes the San
-Ildefonso and Pojoaque puebloes. Another high density community lies in a
-shallow north-south canyon at the base of the Sangre de Cristos. Additional high
-density communities are observed on the Pajarito Plateau in Bandelier NM. In the
-CIB area, the three densest communities can be found in the far eastern edge of
-the study area near El Morro NM, with additional dense communities near Ramah
-just to the west of El Morro and Manuelito in the northwest.
+Ildefonso and Pojoaque pueblos. Another high density community lies in a shallow
+north-south canyon at the base of the Sangre de Cristos. Additional high density
+communities are observed on the Pajarito Plateau in Bandelier NM. In the CIB
+area, the three densest communities can be found in the far eastern edge of the
+study area near El Morro NM, with additional dense communities near Ramah just
+to the west of El Morro and Manuelito in the northwest.
 
 ::: {#tbl-results}
 ```{=latex}
@@ -729,17 +731,17 @@ Community Summaries
 
 Results of the sensitivity analysis are as expected given the role that the main
 tuning parameters play in the algorithm (see @fig-sensitivity). Increasing
-$D{\text -}join$ makes it easier to join two communities, so you see growth in
-the total area of communities and declines in the total number of resulting
-communities as it increases. Increasing $P$ makes it harder to join communities,
-so you see fewer and smaller communities as it increases. Increasing
-$D{\text -}max$ increases the total area of communities and the average commute
-time to centers as it serves to filter out distant farmsteads. Importantly,
-finer-grained grid resolutions had no meaningful impact on the results of this
-analysis, so the level of aggregation we chose is acceptable. One puzzling
-result is that the CIB region shows some volatility in its room densities with
-respect to the main tuning parameters. The number of CIB communities is also
-largely invariant. We comment on this in the discussion.
+$D{\text -}join$ makes it easier to join two communities, thus leading to growth
+in the total area of communities and declines in the total number of resulting
+communities. Increasing $P$ makes it harder to join communities, thus leading to
+fewer and smaller communities. Increasing $D{\text -}max$ increases the total
+area of communities and the average commute time to centers as it serves to
+filter out distant farmsteads. Importantly, finer-grained grid resolutions had
+no meaningful impact on the results of this analysis, so the level of
+aggregation we chose appears acceptable. One puzzling result is that the CIB
+region shows some volatility in its room densities with respect to the main
+tuning parameters. The number of CIB communities is also largely invariant. We
+comment on this in the discussion.
 
 # Discussion
 
@@ -772,22 +774,21 @@ observed farms, not random points).
 :::
 
 Because our algorithm requires that we calculate the commute time between each
-farm and community center, it also allows us to evaluate potential spatial -
-strictly, commute time - interactions between them. @fig-commutes tries to get
-at this idea by showing the difference between (i) the log probability density
-of commute times from observed farms to their nearest centers and (ii) the log
-probability density of commute times from random locations to their nearest
-centers, along with the 95% quantiles of the observed distributions. This is
-analogous to what @reese_etal2019 refer to as the "null difference cost
-distance." One can interpret it as showing where commute times differ from what
-one might expect were farm sites distributed at random across the landscape.
-Values much larger than zero indicate that there are more farms located at those
-commute times from centers than you would expect by chance. Conversely, values
-less than zero indicate that there are less farms located at those locations
-than one might expect by chance. In either case, these differences tell us that
-there is positive covariance between farmsteads and nearby centers at commute
-times of less than approximately one hour (the value we assigned to
-$D{\text -}max$).
+farm and community center, we can also evaluate potential spatial - strictly,
+commute time - interactions between them. @fig-commutes illustrates this idea by
+showing the difference between (i) the log probability density of commute times
+from observed farms to their nearest centers and (ii) the log probability
+density of commute times from random locations to their nearest centers, along
+with the 95% quantiles of the observed distributions. This is analogous to what
+@reese_etal2019 refer to as the "null difference cost distance." One can
+interpret it as showing where commute times differ from what one might expect if
+farm sites were distributed randomly across the landscape. Values larger than
+zero indicate that there are more farms located at those commute times from
+centers than you would expect by chance. Conversely, values less than zero
+indicate that there are less farms located at those locations than one might
+expect by chance. In either case, these differences tell us that there is
+positive covariance between farmsteads and nearby centers at commute times of
+less than approximately one hour (the value we assigned to $D{\text -}max$).
 
 The shapes of the density curves are not, however, identical. We attribute this
 to three factors: sampling intensity, local topography, and regional settlement
@@ -802,7 +803,8 @@ within the surveyed areas.
 ![](../figures/results-boxplot.png){width="5.2in"}
 
 Figure shows for each region the distribution of relevant variables across
-communities.
+communities. Note that these are time-insensitive distributions of the samples
+in each region.
 :::
 
 Perhaps more interesting though is the fact that these regions represent
@@ -873,17 +875,18 @@ care about.
 Because the type of community we aim to delineate is a dispersed *farming*
 community, we structure our algorithm around the dimensions of food production,
 travel time, and social interaction, as these are major constraints on
-settlement for maize farmers [@bocinsky_kohler2014; @bocinsky_etal2016;
+settlement for subsistence farmers [@bocinsky_kohler2014; @bocinsky_etal2016;
 @vernon_etal2022a; @vernon_etalinpress; @yaworsky_etal2023]. To give just one
 example, our algorithm suggests that 50% of CMV communities offer anywhere from
-15-50 hectares per farm. For the CIB and NRG regions, that's 25-45 and 15-35
-hectares per farm, respectively. This means that they meet the 14 hectare
-threshold required for a household to subsist on maize in these regions
-[@reese_etal2019; @benson2011; @bocinsky_varien2017]. And that is before taking
-into account that the area of the community is held fixed [pace @reese_etal2019]
-and all sites are used regardless of time period, so the derived ratios of land
-to farms represent minimum possible levels, not the levels actually experienced
-by farmers in these communities at any given time.
+15-50 hectares per farm. For the CIB and NRG regions, the corresponding figures
+are 25-45 and 15-35 hectares per farm, respectively. This means that farms in
+all three areas meet the 14 hectare threshold required for a household to
+subsist on maize in these regions [@reese_etal2019; @benson2011;
+@bocinsky_varien2017]. And that is before taking into account that the area of
+the community is held fixed [pace @reese_etal2019] and all sites are used
+regardless of time period, so the derived ratios of land to farms represent
+minimum possible levels, not the levels actually experienced by farmers in these
+communities at any given time.
 
 # Conclusion
 
@@ -891,13 +894,13 @@ In this paper, we develop an algorithm that leverages the difference between
 farmsteads and community centers to cluster sites into dispersed farming
 communities and define their boundaries. This was inspired by the concept of a
 CBSA, along with important contributions from @varien1999 and @reese_etal2019.
-Using this algorithm will allow us to capture and compare the changing
-properties of both dispersed and aggregated communities using consistent
-measurements. For instance, we can use uniform probability density analysis of
-pottery assemblages from each site [@ortman2016] to apportion rooms to time
-slices and thus estimate changes in population density through time. The ability
-to compare these properties for communities of varying scales and densities is
-crucial for evaluating their relative costs and benefits for human welfare.
+This algorithm allows us to capture and compare the changing properties of both
+dispersed and aggregated communities using consistent measurements. For
+instance, we can use uniform probability density analysis of pottery assemblages
+from each site [@ortman2016] to apportion rooms to time slices and thus estimate
+changes in population density through time. The ability to compare these
+properties for communities of varying scales and densities is crucial for
+evaluating their relative costs and benefits for human welfare.
 
 # Acknowledgements
 
