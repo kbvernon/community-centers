@@ -2,7 +2,10 @@
 .Rhistory
 .RData
 .Ruserdata
+.Rbuildignore
+.Rprofile
 /.quarto/
 /_misc/
 /data/
 *.docx
+*.Rproj
