@@ -24,6 +24,8 @@ This repository contains code and figures for our paper:
 📂 [manuscript](/manuscript) contains the pre-print\
   ⊢ 📄 [manuscript.qmd](/manuscript/manuscript.qmd)\
   ⊢ 📄 [manuscript.pdf](/manuscript/manuscript.pdf)\
+  ⊢ 📄 [jas-reviews.md](/manuscript/jas-reviews.md)\
+  ⊢ 📄 [jas-reviews-response.md](/manuscript/jas-reviews-response.md)\
 📂 [R](/R) code for preparing data and conducting analysis, including\
   ⊢ 📄 [community-clustering.qmd](/R/analysis.qmd) is the primary analysis and\
   ⊢ 📄 [get-elevation.R](/R/get-elevation.R) downloads DEMs.\
