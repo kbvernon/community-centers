@@ -22,12 +22,14 @@ This repository contains code and figures for our paper:
 📂 [\_extensions](/_extensions) has Quarto extension for compiling manuscript\
 📂 [figures](/figures) contains all figures included in the paper\
 📂 [manuscript](/manuscript) contains the pre-print\
+  ⊢ 📄 [bibliography.bib](/manuscript/bibliography.bib)\
   ⊢ 📄 [manuscript.qmd](/manuscript/manuscript.qmd)\
   ⊢ 📄 [manuscript.pdf](/manuscript/manuscript.pdf)\
   ⊢ 📄 [jas-reviews.md](/manuscript/jas-reviews.md)\
   ⊢ 📄 [jas-reviews-response.md](/manuscript/jas-reviews-response.md)\
 📂 [R](/R) code for preparing data and conducting analysis, including\
-  ⊢ 📄 [community-clustering.qmd](/R/analysis.qmd) is the primary analysis and\
+  ⊢ 📄 [community-clustering.qmd](/R/community-clustering.qmd) is the primary
+analysis and\
   ⊢ 📄 [get-elevation.R](/R/get-elevation.R) downloads DEMs.\
   ⊢ 📄 [labeled-overview-map.R](/R/labeled-overview-map.R) make overview map
 with labeled landmarks, administrative units, and cities.
