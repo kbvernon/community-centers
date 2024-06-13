@@ -10,12 +10,13 @@ This repository contains code and figures for our paper:
 > [![](https://orcid.org/sites/default/files/images/orcid_16x16.png)](https://orcid.org/0000-0003-0098-5092),
 > and Scott Ortman
 > [![](https://orcid.org/sites/default/files/images/orcid_16x16.png)](https://orcid.org/0000-0003-0709-5287)
-> (2023). A method for defining dispersed community territories. *Journal of
+> (2024). A method for defining dispersed community territories. *Journal of
 > Archaeological Science*.
 
 **Preprint**: [manuscript.pdf](/manuscript/manuscript.pdf)
 
-**Supplement**: [/R/community-clustering.html](/R/community-clustering.html)
+**Supplement**:
+[community-clustering.html](https://kbvernon.github.io/community-centers/R/community-clustering.html)
 
 ## Contents
 
@@ -43,6 +44,25 @@ Preservation Offices in Colorado, New Mexico, and Arizona.
 
 For what's it worth, you can still explore these data (with jittered locations)
 using the [cyberSW](https://cybersw.org/) web app.
+
+## 📈 Replicate analysis
+
+Assuming you had access to the data in `community-centers.gpkg`, you could
+re-run all of the data preparation and analysis like this:
+
+``` r
+library(here)
+library(quarto)
+
+# needs to be run in this order
+here("R", "get-elevation.R") |> source()
+here("R", "labeled-overview-map.R") |> source()
+here("R", "community-clustering.qmd") |> quarto_render()
+
+# if you have a hankerin' to compile the manuscript
+# you can do that like so:
+here("manuscript", "manuscript.qmd") |> quarto_render()
+```
 
 ## License
 
