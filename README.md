@@ -1,7 +1,7 @@
 # community-centers
 
 <!-- badges: start -->
-
+[![DOI](https://zenodo.org/badge/644078765.svg)](https://zenodo.org/doi/10.5281/zenodo.11661269)
 <!-- badges: end -->
 
 This repository contains code and figures for our paper:
