@@ -537,14 +537,27 @@ unrealistic, not representing any sort of meaningful boundary given the
 landscape. An alternative would be to use the convex hull of the set of points,
 but this tends to exaggerate the total area of the community, especially when
 the distribution of points is suggestive of a concave shape, like the letter
-'C'. A concave hull would handle peculiar shapes, but it would also introduce
+'C'. A concave hull would handle peculiar shapes, but it could also introduce
 the opposite problem, restricting the area of the community to an unreasonable
-degree. Our somewhat brute force way of balancing these factors is to identify
-paths with shortest commute times between the outer most farms in a community,
-extract the vertices from those paths, and then incorporate those into the set
-of points used to define the concave hull. The result is a polygon that is
+degree, depending on how strict the convexity ratio is. Our somewhat brute force
+way of balancing these factors is to identify paths with shortest commute times
+between the outer most farms in a community, extract the vertices from those
+paths, and then incorporate those into the set of points used to define the
+concave hull (see @fig-boundary-example). The result is a polygon that is
 concave as well in the dimension of time, meaning the paths with shortest
 commute times between any two farms never leave the community.
+
+::: {#fig-boundary-example}
+![](../figures/boundary-example.png){width="6.5in"}
+
+Example of the method used to define community boundaries. Left panel shows two
+hull geometries: (i) convex hull with dark gray fill and (ii) concave hull
+(ratio = 0.1) with light gray fill. Middle panel shows every pairwise short path
+between the points along the outer edge of the convex hull. Right panel shows
+community boundary derived by applying the concave hull (ratio = 0.5) to the
+combined set of site points and vertices of short paths. The most notable
+differences are along the left boundary.
+:::
 
 In some cases, this may lead to overlapping community boundaries, though the
 amount of overlap should be minimal given the way that we cluster points,
@@ -565,16 +578,12 @@ The key to our path analysis is to take information about the terrain in our
 study regions and convert it first into meaningful estimates of hiking speed and
 then into meaningful estimates of travel time. Fortunately, attempts to model
 hiking speed across a range of slopes have advanced considerably in recent
-years, most notably in @campbell_etal2019. Drawing on a large, crowd-sourced
-fitness tracker data set consisting of approximately 420,000 individual hikes,
-jogs, and trail runs from nearly 30,000 individuals in Salt Lake City, UT,
-@campbell_etal2019 offer what is easily the most empirically robust estimate of
-hiking speed to date. Our application of Campbell's hiking function relies on
-coefficients from the fifth percentile of individuals in their sample, using the
-Cauchy (or Lorentz) distribution as recommended by Campbell, and assumes that
-everyone in the areas of our analysis were largely equal in their walking speed
-and endurance. This makes their walking speeds comparable to, but not the same
-as, what would be estimated by Tobler's hiking function [@tobler1993].
+years, most notably in [@campbell_etal2022; see also @campbell_etal2019]. Our
+application of Campbell's hiking function relies on coefficients from the median
+range of individuals in their sample and assumes that everyone in the areas of
+our analysis was largely equal in their walking speed and endurance. This makes
+their walking speeds comparable to, but not the same as, what would be estimated
+by Tobler's hiking function [@tobler1993].
 
 To calculate travel or commute times, we first download a 1 Arc-second digital
 elevation model (DEM) for each study area from the @usgs2023 3D Elevation
@@ -622,17 +631,17 @@ and then (ii) to regionalize those communities by giving them meaningful
 boundaries. This was done by developing a simple algorithm inspired by the
 concept of a CBSA combined with previous work by @varien1999 and
 @reese_etal2019. Using parameter values $D{\text -}join$ = 30 minutes,
-$D{\text -}max$ = 1 hour, and $P$ = 0.8, our algorithm identified 104
-communities in CMV, 90 communities in NRG, and 45 communities in CIB (see
+$D{\text -}max$ = 1 hour, and $P$ = 0.8, our algorithm identified 103
+communities in CMV, 88 communities in NRG, and 45 communities in CIB (see
 @fig-communities). The number of communities removed because they included an
-insufficient number of sites was 4 for CMV, 35 for NRG, and 23 for CIB, leaving
-100, 55, and 22 communities with definable spatial extents.
+insufficient number of sites was 5 for CMV, 33 for NRG, and 23 for CIB, leaving
+98, 55, and 22 communities with definable spatial extents.
 
-The mean areas of these communities are 8.68 km$^2$ in CMV, 6.06 km$^2$ in NRG,
-and 7.19 km$^2$ in CIB; the mean room counts (for all community centers and
-farms) are 647.76 in CMV, 593.49 in NRG, and 766.68 in CIB; and the mean room
-densities are 99.69 rooms per km$^2$ in CMV, 219.77 rooms per km$^2$ in NRG, and
-238.76 rooms per km$^2$ in CIB. We emphasize that the means in several cases
+The mean areas of these communities are 9.51 km$^2$ in CMV, 6.5 km$^2$ in NRG,
+and 7.74 km$^2$ in CIB; the mean room counts (for all community centers and
+farms) are 663 in CMV, 598.65 in NRG, and 768.05 in CIB; and the mean room
+densities are 83.83 rooms per km$^2$ in CMV, 183.93 rooms per km$^2$ in NRG, and
+207.18 rooms per km$^2$ in CIB. We emphasize that the means in several cases
 deviate to a considerable degree from median values (denoted in @tbl-results
 with the Greek letter $\eta$), indicating skew in the data and the potential
 presence of large outliers. This is illustrated in the boxplots in
@@ -685,40 +694,40 @@ of Manuelito in the northwest.
 \begin{tabular}{lrllllll}
     & 
     & 
-\textbf{\begin{tabular}[c]{@{}l@{}}Area\\ (km2)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}l@{}}Rooms\\ (N)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}l@{}}Farms\\ (N)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}l@{}}Centers\\ (N)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}l@{}}Commute\\ (mins)\end{tabular}}  & \textbf{\begin{tabular}[c]{@{}l@{}}Room Density\\ (N/km2)\end{tabular}} 
+\textbf{\begin{tabular}[c]{@{}l@{}}Area\\ (sq.km)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}l@{}}Rooms\\ (N)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}l@{}}Farms\\ (N)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}l@{}}Centers\\ (N)\end{tabular}} & \textbf{\begin{tabular}[c]{@{}l@{}}Commute\\ (mins)\end{tabular}}  & \textbf{\begin{tabular}[c]{@{}l@{}}Room Density\\ (N/sq.km)\end{tabular}} 
   \\[2mm]
   \hline
   \noalign{\vskip2mm}
 CMV &
 \begin{tabular}[c]{@{}l@{}} $\eta$\\ $\mu$\\ $\sigma$ \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 7.1\\ : 8.68\\ : 6.73 \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 402\\ : 647.76\\ : 701.36 \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 24.5\\ : 44.38\\ : 55.86 \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 1\\ : 1.65\\ : 1.37 \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 22.35\\ : 23.28\\ : 8.83 \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 57.49\\ : 99.69\\ : 97.36 \end{tabular}
+\begin{tabular}[c]{@{}l@{}} : 7.61\\ : 9.51\\ : 7.2 \end{tabular} &
+\begin{tabular}[c]{@{}l@{}} : 399\\ : 663\\ : 753.62 \end{tabular} &
+\begin{tabular}[c]{@{}l@{}} : 25.5\\ : 45.61\\ : 59.11 \end{tabular} &
+\begin{tabular}[c]{@{}l@{}} : 1\\ : 1.67\\ : 1.39 \end{tabular} &
+\begin{tabular}[c]{@{}l@{}} : 21.51\\ : 22.72\\ : 8.3 \end{tabular} &
+\begin{tabular}[c]{@{}l@{}} : 55.08\\ : 83.83\\ : 71.93 \end{tabular}
   \\[5mm]
   \hline
   \noalign{\vskip2mm}
 NRG &
 \begin{tabular}[c]{@{}l@{}} $\eta$\\ $\mu$\\ $\sigma$ \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 5.53\\ : 6.06\\ : 4.56 \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 479\\ : 593.49\\ : 444.7 \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 20\\ : 36.73\\ : 34.96 \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 2\\ : 2.49\\ : 2.06 \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 19.12\\ : 19.04\\ : 8.77 \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 99.43\\ : 219.77\\ : 450.86 \end{tabular}
+\begin{tabular}[c]{@{}l@{}} : 5.45\\ : 6.5\\ : 5.07 \end{tabular} &
+\begin{tabular}[c]{@{}l@{}} : 475\\ : 598.65\\ : 468.12 \end{tabular} &
+\begin{tabular}[c]{@{}l@{}} : 18\\ : 36.91\\ : 37.55 \end{tabular} &
+\begin{tabular}[c]{@{}l@{}} : 2\\ : 2.53\\ : 2.17 \end{tabular} &
+\begin{tabular}[c]{@{}l@{}} : 18.14\\ : 18.28\\ : 8.65 \end{tabular} &
+\begin{tabular}[c]{@{}l@{}} : 98.69\\ : 183.93\\ : 269.84 \end{tabular}
   \\[5mm]
   \hline
   \noalign{\vskip2mm}
 CIB &
 \begin{tabular}[c]{@{}l@{}} $\eta$\\ $\mu$\\ $\sigma$ \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 4.37\\ : 7.19\\ : 7.39 \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 492\\ : 766.68\\ : 626.09 \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 13.5\\ : 24.14\\ : 25.34 \end{tabular} &
+\begin{tabular}[c]{@{}l@{}} : 4.59\\ : 7.74\\ : 7.96 \end{tabular} &
+\begin{tabular}[c]{@{}l@{}} : 492\\ : 768.05\\ : 626.91 \end{tabular} &
+\begin{tabular}[c]{@{}l@{}} : 13.5\\ : 24.23\\ : 25.39 \end{tabular} &
 \begin{tabular}[c]{@{}l@{}} : 2\\ : 2\\ : 1.11 \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 21.16\\ : 24.74\\ : 12.27 \end{tabular} &
-\begin{tabular}[c]{@{}l@{}} : 170.25\\ : 238.76\\ : 270.64 \end{tabular}
+\begin{tabular}[c]{@{}l@{}} : 20.85\\ : 24.36\\ : 12.14 \end{tabular} &
+\begin{tabular}[c]{@{}l@{}} : 157.01\\ : 207.18\\ : 218.53 \end{tabular}
   \\[5mm]
   \hline
   \noalign{\vskip2mm}
@@ -735,14 +744,14 @@ tuning parameters play in the algorithm (see @fig-sensitivity). Increasing
 $D{\text -}join$ makes it easier to join two communities, thus leading to growth
 in the total area of communities and declines in the total number of resulting
 communities. Increasing $P$ makes it harder to join communities, thus leading to
-fewer and smaller communities. Increasing $D{\text -}max$ increases the total
-area of communities and the average commute time to centers as it serves to
-filter out distant farmsteads. Importantly, finer-grained grid resolutions had
-no meaningful impact on the results of this analysis, so the level of
-aggregation we chose appears acceptable. One puzzling result is that the CIB
-region shows some volatility in its room densities with respect to the main
-tuning parameters. The number of CIB communities is also largely invariant. We
-comment on this in the discussion.
+more smaller communities. Increasing $D{\text -}max$ increases the total area of
+communities and the average commute time to centers as it serves to filter out
+distant farmsteads. Importantly, finer-grained grid resolutions had no
+meaningful impact on the results of this analysis, so the level of aggregation
+we chose appears acceptable. One puzzling result is that the CIB region shows
+some volatility in its room densities with respect to the main tuning
+parameters. The number of CIB communities is also largely invariant. We comment
+on this in the discussion.
 
 # Discussion
 
@@ -770,8 +779,9 @@ themselves.
 
 Figure shows the difference between the log density of commute times (in
 minutes) from observed farms and random locations to the nearest community
-center for each region, along with the location of their 95% quantile (for
-observed farms, not random points).
+center for each region, along with the location of their 95% quantile for
+observed farms (the location of the point next to the respective region label,
+all being between 60 and 90 minutes).
 :::
 
 Because our algorithm requires that we calculate the commute time between each

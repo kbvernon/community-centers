@@ -15,6 +15,11 @@ format:
     smooth-scroll: true
     theme: cosmo
     highlight-style: a11y
+    code-tools: true
+    code-links:
+      - text: kbvernon/community-centers
+        icon: github
+        href: https://github.com/kbvernon/community-centers
 execute: 
   echo: true
   warning: false
@@ -542,17 +547,17 @@ add_graph <- function(x, max_slope = NULL){
   # 2) calculate the length of each slope (the length of the hypotenuse)
   # 3) divide length by speed to get travel time (this is the edge weight)
 
-  # Campbell's hiking function, see Campbell et al 2019
+  # Campbell's hiking function, see Campbell et al 2022
   # note: campbell function wants degrees!
   campbell <- function(x) {
     
-    # values provided in Supplement Table S3
+    # values provided in Appendix Table S3
     # using the 5th percentile of the Lorentz curve as recommended by Campbell
-    a <- -1.527
-    b <- 14.041
-    c <- 36.813
-    d <- 0.320
-    e <- -0.00273
+    a <- -1.4579
+    b <- 22.0787
+    c <- 76.3271
+    d <- 0.0525
+    e <- -0.00032002
     
     # lorentz distribution
     lorentz <- (1 / ((pi * b) * (1 + ((x - a) / b)^2)))
@@ -1243,6 +1248,19 @@ community, often to a significant degree. On the other hand, the concave hull
 can generate extremely unrealistic shapes for communities, even when moving the
 concavity ratio closer to the convex hull.
 
+::: {#fig-boundary-example}
+![](../figures/boundary-example.png){width="100%"
+fig-alt="An example of the method used to define community boundaries."}
+
+Example of the method used to define community boundaries. Left panel shows two
+hull geometries: (i) convex hull with dark gray fill and (ii) concave hull 
+(ratio = 0.1) with light gray fill. Middle panel shows every pairwise short path 
+between the points along the outer edge of the convex hull. Right panel shows 
+community boundary derived by applying the concave hull (ratio = 0.5) to the 
+combined set of site points and vertices of short paths. The most notable
+differences are along the left boundary.
+:::
+
 Our somewhat brute force strategy for navigating between the Scylla and
 Charybdis of being too big or too strange is to first compute the least-cost
 path between every site on the concave hull of the community's site points. In
@@ -1326,7 +1344,7 @@ define_boundaries <- function(x, concavity_ratio, dilate){
     # each element of the list is a vector of the grid cells that the short
     # path passes through
     paths <- get_multi_paths(graph, from = cells, to = cells)
-    
+
     # unraveling this list gives us a vector of all the cells on shortest paths
     paths <- paths |> unlist(recursive = TRUE) |> as.numeric() |> unique()
     
@@ -1372,9 +1390,9 @@ define_boundaries <- function(x, concavity_ratio, dilate){
 ```{r}
 #| time_it: true
 
-cmv <- cmv |> define_boundaries(concavity_ratio = 0.1, dilate = c(130, -100))
-nrg <- nrg |> define_boundaries(concavity_ratio = 0.1, dilate = c(130, -100))
-cib <- cib |> define_boundaries(concavity_ratio = 0.1, dilate = c(130, -100))
+cmv <- cmv |> define_boundaries(concavity_ratio = 0.5, dilate = c(130, -100))
+nrg <- nrg |> define_boundaries(concavity_ratio = 0.5, dilate = c(130, -100))
+cib <- cib |> define_boundaries(concavity_ratio = 0.5, dilate = c(130, -100))
 
 ```
 
