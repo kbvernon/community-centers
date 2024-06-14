@@ -619,9 +619,9 @@ sensitivity analysis with varying grid resolutions, which are reported below
 
 All analyses, including the cost-distance modeling and our implementation of the
 algorithm, are conducted in the R programming language and environment
-[@rcoreteam2023]. For more details, please see Supplementary Materials, which
-include all code necessary to reproduce these analyses and the figures in the
-text.
+[@rcoreteam2023]. For more details, please see the Zenodo repository
+[@kenneth_blake_vernon_2024_11661270], which includes all code necessary to
+reproduce all analyses and figures in the text.
 
 # Results
 
