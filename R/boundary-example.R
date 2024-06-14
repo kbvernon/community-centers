@@ -1,5 +1,6 @@
 
 library(here)
+library(magick)
 library(patchwork)
 library(sf)
 library(sfdep)
